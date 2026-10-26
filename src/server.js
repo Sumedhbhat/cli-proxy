@@ -270,9 +270,20 @@ const server = http.createServer(async (req, res) => {
     res.end(req.method === 'HEAD' ? undefined : await readFile(`${publicDir}${name}`));
   } catch (e) { if (!res.headersSent) json(res, e.status || 502, { error: e.message }); else res.destroy(); }
 });
-server.on('upgrade', (req, socket, head) => {
+server.on('upgrade', async (req, socket, head) => {
   const path = new URL(req.url, 'http://localhost').pathname;
   if (path !== '/v1/responses' || !validOrigin(req)) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
+  // When every Codex credential is cooling down the engine closes the socket without
+  // an error frame, and Codex retries until it gives up. Refuse the upgrade with
+  // Codex's usage-limit response instead; Codex reports that without retrying.
+  const limit = !demo && authorized(req) ? await codexLimit() : null;
+  if (limit) {
+    const body = JSON.stringify({ error: codexLimitError(limit) });
+    const headers = { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Retry-After': Math.max(1, Math.ceil((Date.parse(limit.resetsAt) - Date.now()) / 1000)), 'X-Ratelimit-Reset': limit.resetsAt, ...limit.headers, Connection: 'close' };
+    socket.end(`HTTP/1.1 429 Too Many Requests\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n${body}`);
+    log('limit', 'Codex usage limit reported to client', { status: 429, resetsAt: limit.resetsAt });
+    return;
+  }
   proxy(req, socket, head);
 });
 const sockets = new Set();
