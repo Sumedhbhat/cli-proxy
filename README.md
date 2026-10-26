@@ -135,11 +135,14 @@ Priority is **per credential**, not per model. A model-specific quota window can
 
 Account priority affects new sessions. Established session bindings take precedence inside the engine. Keep client session headers intact and avoid changing accounts unnecessarily to preserve provider caches. The gateway forwards those headers without inspecting prompt bodies.
 
-Before the scheduler changes priorities, it saves their original values in `.local/priorities-backup.json`. Pausing scheduling leaves the last priorities in place. To restore the originals, pause the scheduler, stop the console, leave the engine running, and run:
+Before the scheduler changes priorities, it saves their original values in `.local/priorities-backup.json`. Pausing scheduling leaves the last priorities in place. To restore the originals, pause the scheduler, stop the console, leave the engine running, and run the restore from the directory the console runs in. It reads that directory's `.env` and `.local/`. For the persistent service, that is the installation:
 
 ```sh
+cd ~/.local/share/cli-proxy
 npm run restore-priorities
 ```
+
+For a console started with `npm start`, run `npm run restore-priorities` in that checkout instead.
 
 ## Checks and limits
 
