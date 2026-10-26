@@ -1,0 +1,6 @@
+export function demoAccounts() {
+  const now = Date.now();
+  const days = n => new Date(now + n * 86400000).toISOString();
+  const make = (id, provider, email, remaining, hours, reset, extra = null) => ({ id, name: `${provider}-${email}.json`, email, provider, disabled: false, runtimeOnly: false, status: 'active', priority: 0, plan: provider === 'claude' ? 'Max' : 'Pro', success: 0, failed: 0, quota: { fetchedAt: new Date().toISOString(), windows: [{ id: provider === 'claude' ? 'seven_day_fable' : 'weekly', label: provider === 'claude' ? '7-day Fable' : 'Weekly limit', remaining, resetsAt: days(reset) }, { id: 'five_hour', label: '5-hour limit', remaining: hours, resetsAt: days(.12) }, ...(extra == null ? [] : [{ id: 'seven_day', label: '7-day limit', remaining: extra, resetsAt: days(reset) }])] } });
+  return [make('c1','claude','studio@home.dev',58,100, .8,79),make('c2','claude','build@home.dev',100,100,3.7,100),make('c3','claude','research@home.dev',100,100,4.4,100),make('c4','claude','work@home.dev',51,99,.55,75),make('c5','claude','personal@home.dev',100,100,5.8,100),make('o1','codex','studio@home.dev',17,82,1.4),make('o2','codex','build@home.dev',0,0,2.2),make('o3','codex','personal@home.dev',0,0,4),make('x1','xai','studio@home.dev',62,100,4.7),make('k1','kimi','studio@home.dev',100,100,4.8)];
+}

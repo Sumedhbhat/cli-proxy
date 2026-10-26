@@ -1,0 +1,18 @@
+{
+  "name": "cli-proxy",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "demo": "node src/server.js --demo",
+    "setup": "node scripts/setup.js",
+    "engine": "node scripts/engine.js",
+    "service:install": "node scripts/install-service.js",
+    "clients:configure": "node scripts/configure-clients.js",
+    "restore-priorities": "node scripts/restore-priorities.js",
+    "export-demo": "node scripts/export-demo.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check public/app.js && node --test"
+  }
+}
