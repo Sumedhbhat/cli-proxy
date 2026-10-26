@@ -2,14 +2,14 @@ import { normalizeQuota } from './quota.js';
 
 export class Engine {
   constructor({ url, key }) { this.url = url.replace(/\/$/, ''); this.key = key; }
-  async request(path, { method = 'GET', body, raw = false } = {}) {
-    const response = await fetch(`${this.url}/v0/management/${path}`, { method, headers: { Authorization: `Bearer ${this.key}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(20000), redirect: 'error' });
+  async request(path, { method = 'GET', body, raw = false, timeoutMs = 20000 } = {}) {
+    const response = await fetch(`${this.url}/v0/management/${path}`, { method, headers: { Authorization: `Bearer ${this.key}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     if (!response.ok) throw new Error(`Engine ${path.split('?')[0]} returned HTTP ${response.status}`);
     return raw ? response.text() : response.json();
   }
+  async authFiles(timeoutMs) { return (await this.request('auth-files', { timeoutMs })).files || []; }
   async accounts() {
-    const data = await this.request('auth-files');
-    return (data.files || []).map(a => ({ id: String(a.auth_index || a.id || a.name), name: a.name, email: a.email || '', provider: a.provider || a.type || 'unknown', disabled: Boolean(a.disabled), runtimeOnly: Boolean(a.runtime_only), status: a.status || 'unknown', priority: Number(a.priority) || 0, supportsQuota: Boolean(a.supports_quota), accountId: a.id_token?.chatgpt_account_id || null, plan: a.plan_type || '', success: Number(a.success) || 0, failed: Number(a.failed) || 0 }));
+    return (await this.authFiles()).map(a => ({ id: String(a.auth_index || a.id || a.name), name: a.name, email: a.email || '', provider: a.provider || a.type || 'unknown', disabled: Boolean(a.disabled), runtimeOnly: Boolean(a.runtime_only), status: a.status || 'unknown', priority: Number(a.priority) || 0, supportsQuota: Boolean(a.supports_quota), accountId: a.id_token?.chatgpt_account_id || null, plan: a.plan_type || '', success: Number(a.success) || 0, failed: Number(a.failed) || 0 }));
   }
   async quota(account) {
     if (account.supportsQuota) {
