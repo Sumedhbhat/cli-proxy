@@ -5,7 +5,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { Engine } from './engine.js';
-import { rankAccounts, nearestResetInfo } from './quota.js';
+import { rankAccounts, nearestResetInfo, modelProvider } from './quota.js';
+import { codexUsageLimit, codexLimitError } from './codex-limit.js';
 import { demoAccounts } from './demo.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
@@ -92,9 +93,23 @@ async function refresh(accountID = null) {
   return refreshing;
 }
 const inferencePath = path => /^\/v1\/(models|messages(?:\/count_tokens)?|chat\/completions|completions|responses(?:\/.*)?)$/.test(path);
+const authorized = req => equal(req.headers.authorization, `Bearer ${apiKey}`) || equal(req.headers['x-api-key'], apiKey);
+function requestModel(body) {
+  try { return JSON.parse(body).model; }
+  catch { return /"model"\s*:\s*"([^"\\]{1,200})"/.exec(body.slice(0, 65536))?.[1]; }
+}
+// Cooldowns change when the engine sees a provider limit, so read them fresh. A
+// short reuse window keeps a burst of refusals or reconnects to one engine call.
+let authFilesRead = null;
+async function codexLimit(model) {
+  try {
+    if (!authFilesRead || Date.now() - authFilesRead.at > 5000) authFilesRead = { at: Date.now(), files: engine.authFiles(3000) };
+    return codexUsageLimit(await authFilesRead.files, model);
+  } catch (e) { authFilesRead = null; log('error', 'Codex cooldown lookup failed', { detail: e.message }); return null; }
+}
 function proxy(req, res, upgradeHead) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const allowed = equal(req.headers.authorization, `Bearer ${apiKey}`) || equal(req.headers['x-api-key'], apiKey);
+  const allowed = authorized(req);
   if (demo || !allowed) {
     if (upgradeHead !== undefined) { res.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
     json(res, demo ? 503 : 401, { error: { message: demo ? 'Demo mode does not forward inference' : 'Invalid proxy API key' } }); return;
@@ -105,10 +120,11 @@ function proxy(req, res, upgradeHead) {
   for (const name of Object.keys(headers)) if (name.startsWith('x-forwarded-')) delete headers[name];
   headers.authorization = `Bearer ${apiKey}`;
   if (headers['x-api-key']) headers['x-api-key'] = apiKey;
+  // Keep a bounded prefix: large Codex turns still name their model at the start.
   let requestBody = '', requestTooLarge = false;
   if (upgradeHead === undefined) req.on('data', chunk => {
     if (requestTooLarge) return;
-    if (Buffer.byteLength(requestBody) + chunk.length > 2 * 1024 * 1024) { requestTooLarge = true; requestBody = ''; }
+    if (Buffer.byteLength(requestBody) + chunk.length > 2 * 1024 * 1024) requestTooLarge = true;
     else requestBody += chunk.toString();
   });
   const start = Date.now();
@@ -117,34 +133,41 @@ function proxy(req, res, upgradeHead) {
     if (upgradeHead !== undefined) { res.end(`HTTP/1.1 ${response.statusCode} Upstream rejected upgrade\r\nConnection: close\r\n\r\n`); response.resume(); return; }
     const outputHeaders = { ...response.headers }; delete outputHeaders['set-cookie'];
     if (response.statusCode === 429) {
-      let model;
-      try { model = JSON.parse(requestBody).model; } catch {}
-      const resetInfo = nearestResetInfo(accounts, model);
+      const model = requestModel(requestBody);
+      const provider = modelProvider(model) ?? (url.pathname.startsWith('/v1/responses') ? 'codex' : null);
+      const resetInfo = provider === 'claude' ? nearestResetInfo(accounts, model) : null;
       const reset = resetInfo?.resetsAt;
-      if (reset) {
+      if (provider === 'codex' || reset) {
         const chunks = []; let size = 0;
         response.on('data', chunk => {
           size += chunk.length;
           if (size > 2 * 1024 * 1024) { response.destroy(); res.destroy(); return; }
           chunks.push(chunk);
         });
-        response.on('end', () => {
+        response.on('end', async () => {
           let payload;
           try { payload = JSON.parse(Buffer.concat(chunks).toString()); } catch {}
           // Compressed or non-JSON errors retain their upstream representation.
-          if (payload?.error && typeof payload.error.message === 'string' && !outputHeaders['content-encoding']) {
-            payload.error.message += ` Nearest ${/^claude-/i.test(model) ? 'Claude' : 'Codex'} account reset: ${reset}.`;
+          const editable = payload?.error && typeof payload.error.message === 'string' && !outputHeaders['content-encoding'];
+          const limit = editable && provider === 'codex' ? await codexLimit(model) : null;
+          if (limit) {
+            payload.error = codexLimitError(limit, payload.error);
+            delete outputHeaders['x-codex-active-limit'];
+            Object.assign(outputHeaders, limit.headers, { 'x-ratelimit-reset': limit.resetsAt });
+            log('limit', 'Codex usage limit reported to client', { status: 429, resetsAt: limit.resetsAt });
+          } else if (editable && reset) {
+            payload.error.message += ` Nearest Claude account reset: ${reset}.`;
             payload.error.resets_at = reset;
             outputHeaders['retry-after'] = String(Math.max(1, Math.ceil((Date.parse(reset) - Date.now()) / 1000)));
             outputHeaders['x-ratelimit-reset'] = reset;
-            if (resetInfo.provider === 'claude' && resetInfo.rateLimitType) {
+            if (resetInfo.rateLimitType) {
               outputHeaders['anthropic-ratelimit-unified-status'] = 'rejected';
               outputHeaders['anthropic-ratelimit-unified-reset'] = String(Math.ceil(Date.parse(reset) / 1000));
               outputHeaders['anthropic-ratelimit-unified-representative-claim'] = resetInfo.rateLimitType;
             }
-            delete outputHeaders['content-length']; delete outputHeaders['transfer-encoding'];
-            res.writeHead(429, outputHeaders); res.end(JSON.stringify(payload));
-          } else { res.writeHead(429, outputHeaders); res.end(Buffer.concat(chunks)); }
+          } else { res.writeHead(429, outputHeaders); res.end(Buffer.concat(chunks)); return; }
+          delete outputHeaders['content-length']; delete outputHeaders['transfer-encoding'];
+          res.writeHead(429, outputHeaders); res.end(JSON.stringify(payload));
         });
         response.on('error', () => res.destroy());
         return;
