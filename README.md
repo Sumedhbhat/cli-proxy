@@ -90,6 +90,17 @@ For the Claude proxy instance, set **Settings → Providers → Claude → Binar
 
 The gateway selects resets from fresh quota data for the requested provider. If several exhausted windows block an account, all must reset before that account can be used. Unknown or stale reset times are left unavailable. To remove the compatibility launcher, restore the Claude binary path to `~/.local/bin/claude`.
 
+### Codex reset times in T3
+
+Codex needs no launcher. Codex stops retrying a 429 only when the error has `type: "usage_limit_reached"` and an integer `resets_at`, and it publishes the exhausted window only from `x-codex-*` rate-limit headers. T3 takes its reset time and auto-resume from that published window. The engine's own refusal (`model_cooldown`) has neither. Over WebSockets the engine closes the socket without an error frame. Codex then retried for minutes, fell back to HTTPS, and slept toward the multi-hour `Retry-After` behind "exceeded retry limit, last status: 429".
+
+When every enabled Codex credential has a quota cooldown in the engine, the gateway now:
+
+- rewrites the 429 into Codex's usage-limit shape with the engine's nearest `retry_at`, and adds the provider's last recorded `x-codex-primary/secondary-*` headers. `x-codex-active-limit` is dropped, because it would point Codex at a header family that isn't present;
+- refuses `/v1/responses` WebSocket upgrades with that same response. Codex reports a refused handshake directly instead of falling back.
+
+Cooldowns are read fresh from `auth-files` (reused for 5 seconds). If the recorded windows predate the cooldown, only a primary window at 100% with the cooldown's reset time is sent. Transient cooldowns and pools with a usable credential pass through unchanged, so Codex keeps its normal retries. A WebSocket upgrade does not name a model, so model-only cooldowns are reported on the HTTPS fallback instead.
+
 ## Reach the gateway over Tailscale
 
 Both processes bind to `127.0.0.1`. Run them on the machine you want to handle inference, then expose the console and client endpoint through Tailscale:
