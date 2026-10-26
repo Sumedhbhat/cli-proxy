@@ -53,10 +53,14 @@ export function rankAccounts(accounts, now = Date.now(), staleMs = 180000) {
   return result;
 }
 
+export function modelProvider(model) {
+  if (typeof model !== 'string') return null;
+  return /^claude-/i.test(model) ? 'claude' : /^(?:gpt-|codex|o[1-9])/i.test(model) ? 'codex' : null;
+}
+
 // Use only recent provider data; local timers cannot confirm replenishment.
 export function nearestResetInfo(accounts, model, now = Date.now()) {
-  if (typeof model !== 'string') return null;
-  const provider = /^claude-/i.test(model || '') ? 'claude' : /^(?:gpt-|codex|o[1-9])/i.test(model || '') ? 'codex' : null;
+  const provider = modelProvider(model);
   if (!provider) return null;
   const resets = accounts.filter(a => a.provider === provider && !a.disabled && !a.runtimeOnly
     && now - Date.parse(a.quota?.fetchedAt) <= 180000).flatMap(a => {
