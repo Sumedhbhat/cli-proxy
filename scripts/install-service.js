@@ -28,11 +28,20 @@ await mkdir(unitDir, { recursive: true });
 const consoleUnit = join(unitDir, 'cli-proxy-console.service');
 const engineUnit = join(unitDir, 'cli-proxy-engine.service');
 const updating = await exists(consoleUnit);
+const stopped = [];
+let installed = false;
+// A failed update must not leave a previously running installation stopped.
+process.once('exit', () => {
+  if (installed) return;
+  for (const unit of stopped.toReversed()) {
+    try { systemctl(['start', unit]); } catch { console.error(`Could not restart ${unit}; start it with systemctl --user start ${unit}`); }
+  }
+});
 if (updating) {
   for (const unit of ['cli-proxy-console.service', 'cli-proxy-engine.service']) {
     let active = false;
     try { execFileSync('systemctl', ['--user', 'is-active', '--quiet', unit]); active = true; } catch {}
-    if (active) systemctl(['stop', unit]);
+    if (active) { systemctl(['stop', unit]); stopped.push(unit); }
   }
 }
 
@@ -59,6 +68,7 @@ await writeFile(engineUnit, `[Unit]\nDescription=CLI Proxy authentication and in
 await writeFile(consoleUnit, `[Unit]\nDescription=CLI Proxy console and quota scheduler\nAfter=cli-proxy-engine.service\nWants=cli-proxy-engine.service\n\n[Service]\nWorkingDirectory=${destination.replaceAll('%', '%%')}\nExecStart=${quote(process.execPath)} ${quote(`--env-file=${join(destination, '.env')}`)} ${quote(join(destination, 'src/server.js'))}\n${common}`);
 systemctl(['daemon-reload']);
 systemctl(['enable', '--now', 'cli-proxy-engine.service', 'cli-proxy-console.service']);
+installed = true;
 console.log(`Persistent installation: ${destination}`);
 console.log('Services: cli-proxy-engine.service and cli-proxy-console.service');
 console.log('Startup before desktop sign-in is enabled (systemd user lingering).');
