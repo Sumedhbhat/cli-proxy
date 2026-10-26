@@ -69,9 +69,16 @@ test('Codex refusals use Codex usage-limit errors on HTTP and websocket upgrades
 });
 
 test('a client reset during the upgrade cooldown lookup does not stop the gateway', { timeout: 20000 }, async t => {
+  // The startup refresh reads auth-files first; the upgrade's cooldown lookup is the
+  // next read, held open so the client can reset while the gateway waits on it.
+  let lookups = 0, startupRead, upgradeRead;
+  const startup = new Promise(r => { startupRead = r; }), upgradeLookup = new Promise(r => { upgradeRead = r; });
   const engine = http.createServer((req, res) => {
     const path = new URL(req.url, 'http://local').pathname;
-    if (path.endsWith('/auth-files')) setTimeout(() => res.end('{"files":[]}'), 1000);
+    if (path.endsWith('/auth-files')) {
+      if (++lookups === 1) { startupRead(); res.end('{"files":[]}'); }
+      else { upgradeRead(); setTimeout(() => res.end('{"files":[]}'), 1000); }
+    }
     else if (path.endsWith('/config')) res.end('{"routing":{}}');
     else { res.writeHead(404); res.end('{}'); }
   });
@@ -83,9 +90,10 @@ test('a client reset during the upgrade cooldown lookup does not stop the gatewa
   t.after(async () => { child.kill('SIGTERM'); engine.closeAllConnections(); engine.close(); await rm(dir, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/healthz')).ok) break; } catch {} await new Promise(r => setTimeout(r, 30)); }
+  await startup;
   const socket = net.connect(port, '127.0.0.1', () => socket.write('GET /v1/responses HTTP/1.1\r\nHost: local\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nAuthorization: Bearer test-api\r\n\r\n'));
   socket.on('error', () => {});
-  await new Promise(r => setTimeout(r, 200)); socket.resetAndDestroy();
+  await upgradeLookup; socket.resetAndDestroy();
   await new Promise(r => setTimeout(r, 1500));
   assert.equal(exited, false);
   assert.equal((await fetch(base + '/healthz')).status, 200);
