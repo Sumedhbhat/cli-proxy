@@ -7,7 +7,11 @@ import { fileURLToPath } from 'node:url';
 const home = homedir();
 const installation = join(process.env.XDG_DATA_HOME || join(home, '.local/share'), 'cli-proxy');
 const baseURL = (process.argv[2] || 'http://127.0.0.1:8318').replace(/\/$/, '');
-if (!['http:', 'https:'].includes(new URL(baseURL).protocol)) throw new Error('Expected an HTTP(S) gateway URL');
+const gateway = new URL(baseURL);
+if (!['http:', 'https:'].includes(gateway.protocol)) throw new Error('Expected an HTTP(S) gateway URL');
+// The clients send the proxy key as a bearer token; plain HTTP may only stay on this host.
+const loopback = gateway.hostname === 'localhost' || gateway.hostname === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(gateway.hostname);
+if (gateway.protocol === 'http:' && !loopback) throw new Error('Use an https:// gateway URL for a remote gateway');
 const deployedEnv = join(installation, '.env');
 let envPath = deployedEnv;
 try { await access(envPath); } catch { envPath = fileURLToPath(new URL('../.env', import.meta.url)); }
