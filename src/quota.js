@@ -2,7 +2,9 @@ const clamp = n => Math.max(0, Math.min(100, n));
 export function timestamp(value) {
   if (value == null || value === '') return null;
   const n = typeof value === 'number' ? value * (value < 1e12 ? 1000 : 1) : Date.parse(value);
-  return Number.isFinite(n) ? new Date(n).toISOString() : null;
+  // Out-of-range values are finite but still invalid dates.
+  const date = new Date(n);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 function quotaWindow(id, label, used, reset) {
   if (used == null || !Number.isFinite(Number(used))) return null;

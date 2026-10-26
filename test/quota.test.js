@@ -25,6 +25,9 @@ test('Claude utilization is converted to remaining percentage without dropping z
 test('Codex reset timestamps and window durations are normalized', () => {
   const q=normalizeQuota('codex',{rate_limit:{primary_window:{used_percent:17,limit_window_seconds:18000,reset_at:1792886400},secondary_window:{used_percent:83,limit_window_seconds:604800,reset_at:1793318400}}});
   assert.equal(q.windows[0].remaining,83);assert.equal(q.windows[1].label,'Weekly limit');assert.equal(timestamp(1792886400),'2026-10-25T00:00:00.000Z');
+  assert.equal(timestamp(1e16),null);
+  const bad=normalizeQuota('codex',{rate_limit:{primary_window:{used_percent:17,limit_window_seconds:18000,reset_at:1e16}}});
+  assert.equal(bad.windows[0].resetsAt,null);
 });
 test('plugin camelCase and snake_case buckets support 7d windows', () => {
   const q=normalizeQuota('xai',{groups:[{buckets:[{window:'7d',remaining_fraction:.25,reset_time:'2026-10-30T00:00:00Z'}]}]});
