@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -65,4 +66,27 @@ test('Codex refusals use Codex usage-limit errors on HTTP and websocket upgrades
   assert.equal(body.error.type, undefined); assert.equal(body.error.message, 'All credentials for model gpt-6.1-sol are cooling down');
   assert.equal((await upgrade()).res.statusCode, 502);
   assert.equal(upgrades, 1);
+});
+
+test('a client reset during the upgrade cooldown lookup does not stop the gateway', { timeout: 20000 }, async t => {
+  const engine = http.createServer((req, res) => {
+    const path = new URL(req.url, 'http://local').pathname;
+    if (path.endsWith('/auth-files')) setTimeout(() => res.end('{"files":[]}'), 1000);
+    else if (path.endsWith('/config')) res.end('{"routing":{}}');
+    else { res.writeHead(404); res.end('{}'); }
+  });
+  engine.listen(0, '127.0.0.1'); await once(engine, 'listening');
+  const probe = http.createServer().listen(0, '127.0.0.1'); await once(probe, 'listening'); const port = probe.address().port; await new Promise(r => probe.close(r));
+  const dir = await mkdtemp(join(tmpdir(), 'cli-proxy-reset-test-'));
+  const child = spawn(process.execPath, ['src/server.js'], { cwd: process.cwd(), env: { ...process.env, PORT: String(port), ENGINE_URL: `http://127.0.0.1:${engine.address().port}`, ENGINE_MANAGEMENT_KEY: 'test-management', PROXY_API_KEY: 'test-api', DATA_DIR: dir }, stdio: 'ignore' });
+  let exited = false; child.on('exit', () => { exited = true; });
+  t.after(async () => { child.kill('SIGTERM'); engine.closeAllConnections(); engine.close(); await rm(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/healthz')).ok) break; } catch {} await new Promise(r => setTimeout(r, 30)); }
+  const socket = net.connect(port, '127.0.0.1', () => socket.write('GET /v1/responses HTTP/1.1\r\nHost: local\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nAuthorization: Bearer test-api\r\n\r\n'));
+  socket.on('error', () => {});
+  await new Promise(r => setTimeout(r, 200)); socket.resetAndDestroy();
+  await new Promise(r => setTimeout(r, 1500));
+  assert.equal(exited, false);
+  assert.equal((await fetch(base + '/healthz')).status, 200);
 });

@@ -271,6 +271,9 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { if (!res.headersSent) json(res, e.status || 502, { error: e.message }); else res.destroy(); }
 });
 server.on('upgrade', async (req, socket, head) => {
+  // Node drops its socket error listener before 'upgrade'. Without one, a client
+  // reset during the cooldown lookup is an uncaught exception.
+  socket.on('error', () => socket.destroy());
   const path = new URL(req.url, 'http://localhost').pathname;
   if (path !== '/v1/responses' || !validOrigin(req)) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
   // When every Codex credential is cooling down the engine closes the socket without
