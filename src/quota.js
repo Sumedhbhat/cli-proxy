@@ -10,7 +10,27 @@ function quotaWindow(id, label, used, reset) {
   if (used == null || !Number.isFinite(Number(used))) return null;
   return { id, label, remaining: clamp(100 - Number(used)), resetsAt: timestamp(reset) };
 }
+const resetCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+function availableResets(provider, data, now) {
+  if (provider === 'codex') return resetCount(data.rate_limit_reset_credits?.available_count);
+  if (provider !== 'claude') return null;
+  const block = data.cedar_ember;
+  // An ineligible caller (for example an older CLI) does not establish a zero balance.
+  if (block?.eligible !== true || !Array.isArray(block.grants)) return null;
+  let available = 0;
+  for (const grant of block.grants) {
+    const count = resetCount(grant?.resets_left);
+    if (count == null) return null;
+    const startsAt = timestamp(grant.starts_at), endsAt = timestamp(grant.ends_at);
+    if ((grant.starts_at != null && !startsAt) || (grant.ends_at != null && !endsAt)) return null;
+    if (grant.paused === true || (startsAt && Date.parse(startsAt) > now) || (endsAt && Date.parse(endsAt) <= now)) continue;
+    // usable_now describes redemption eligibility, not how many unused resets are held.
+    available += count;
+  }
+  return resetCount(available);
+}
 export function normalizeQuota(provider, data) {
+  const now = Date.now();
   let windows = [];
   if (Array.isArray(data.groups)) {
     windows = data.groups.flatMap((g, i) => (g.buckets || []).map((b, j) => {
@@ -30,7 +50,7 @@ export function normalizeQuota(provider, data) {
   }
   windows = windows.filter(Boolean);
   if (!windows.length) throw new Error('Provider returned no supported quota windows');
-  return { windows, plan: data.subscription?.plan || data.plan_type || null, fetchedAt: new Date().toISOString() };
+  return { windows, availableResets: availableResets(provider, data, now), plan: data.subscription?.plan || data.plan_type || null, fetchedAt: new Date(now).toISOString() };
 }
 export function weeklyWindow(account) {
   const windows = account.quota?.windows || [];

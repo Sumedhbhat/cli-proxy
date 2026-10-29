@@ -93,13 +93,20 @@ function quotaCell(w, account) {
   if (!w) return '<div class="quota-cell"><span class="faint">—</span></div>';
   return `<div class="quota-cell"><div class="quota-top"><span>${esc(w.label)}</span><strong>${pct(w.remaining)}</strong></div>${bar(w.remaining)}<div class="quota-reset" title="${esc(date(w.resetsAt))}">${account.quotaError ? 'Cached · ' : !fresh(account) ? 'Stale · ' : ''}${relative(w.resetsAt)}</div></div>`;
 }
+function accountResets(account) {
+  const count = account.quota?.availableResets;
+  if (count == null && !['claude', 'codex'].includes(account.provider)) return '';
+  const label = Number.isSafeInteger(count) && count >= 0 ? `${count} ${count === 1 ? 'reset' : 'resets'} available` : 'Resets not reported';
+  const age = account.quotaError && account.quota ? 'Cached · ' : account.quota && !fresh(account) ? 'Stale · ' : '';
+  return `<div class="account-resets" title="${esc(`Unused quota resets reported by the provider${account.quota?.fetchedAt ? ` · Last checked ${date(account.quota.fetchedAt)}` : ''}`)}">${age}${label}</div>`;
+}
 function rows(accounts, manage = false) {
   const sorted = [...accounts].sort((a,b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'remaining' ? (weekly(a)?.remaining ?? 101) - (weekly(b)?.remaining ?? 101) : (Date.parse(weekly(a)?.resetsAt) || Infinity) - (Date.parse(weekly(b)?.resetsAt) || Infinity));
   const ranks = state.ranks.filter(r => r.priority > 0);
   const next = ranks.find(r => accounts.some(a => a.id === r.id))?.id;
   return `<div class="${layout === 'cards' ? 'card-view' : ''}">${layout === 'ledger' ? '<div class="ledger-head"><span>Credential</span><span>Weekly quota</span><span>Short window</span><span>Additional limit</span><span></span></div>' : ''}${sorted.map(a => {
     const w = weekly(a), windows = a.quota?.windows || [], hourly = windows.find(x => x !== w && /five|5.hour|5h|primary/i.test(x.id+x.label)), extra = windows.find(x => x !== w && x !== hourly);
-    return `<article class="account-row"><div class="account-identity"><span class="account-name" title="${esc(mask(a.name))}">${esc(mask(a.name))}</span><div class="account-meta"><span>${esc(a.quota?.plan || a.plan || pName(a.provider))}</span>${a.disabled ? '<span class="paused-badge">Paused</span>' : next === a.id ? '<span class="next-badge">Next for new sessions</span>' : ''}${a.quotaError ? `<span class="error" title="${esc(a.quotaError)}">${a.quota ? 'Using cached quota' : 'Quota unavailable'}</span>` : ''}</div></div>${quotaCell(w,a)}${quotaCell(hourly,a)}${quotaCell(extra,a)}<button class="button quiet" data-action="${manage ? 'toggle-account' : 'refresh'}" data-id="${esc(a.id)}" ${busy ? 'disabled' : ''}>${manage ? a.disabled ? 'Resume' : 'Pause' : '↻ Refresh quota'}</button></article>`;
+    return `<article class="account-row"><div class="account-identity"><span class="account-name" title="${esc(mask(a.name))}">${esc(mask(a.name))}</span><div class="account-meta"><span>${esc(a.quota?.plan || a.plan || pName(a.provider))}</span>${a.disabled ? '<span class="paused-badge">Paused</span>' : next === a.id ? '<span class="next-badge">Next for new sessions</span>' : ''}${a.quotaError ? `<span class="error" title="${esc(a.quotaError)}">${a.quota ? 'Using cached quota' : 'Quota unavailable'}</span>` : ''}</div>${accountResets(a)}</div>${quotaCell(w,a)}${quotaCell(hourly,a)}${quotaCell(extra,a)}<button class="button quiet" data-action="${manage ? 'toggle-account' : 'refresh'}" data-id="${esc(a.id)}" ${busy ? 'disabled' : ''}>${manage ? a.disabled ? 'Resume' : 'Pause' : '↻ Refresh quota'}</button></article>`;
   }).join('')}</div>`;
 }
 function quotaPage() {

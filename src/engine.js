@@ -17,7 +17,7 @@ export class Engine {
       return normalizeQuota(account.provider, data);
     }
     const probes = {
-      claude: { url: 'https://api.anthropic.com/api/oauth/usage', header: { Authorization: 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20' } },
+      claude: { url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1', header: { Authorization: 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-cli/2.1.288 (external, cli)' } },
       codex: { url: 'https://chatgpt.com/backend-api/wham/usage', header: { Authorization: 'Bearer $TOKEN$' } },
     };
     const probe = probes[account.provider];

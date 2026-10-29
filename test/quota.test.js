@@ -34,3 +34,32 @@ test('plugin camelCase and snake_case buckets support 7d windows', () => {
   assert.equal(weeklyWindow({quota:q}).remaining,25);
   assert.throws(()=>normalizeQuota('claude',{}),/no supported quota/);
 });
+test('Codex available resets preserve zero and distinguish missing or malformed balances', () => {
+  const usage = { rate_limit: { primary_window: { used_percent: 17 } } };
+  for (const count of [0, 1, 3, 120]) {
+    const quota = normalizeQuota('codex', { ...usage, rate_limit_reset_credits: { available_count: count, applicable_available_count: 0 } });
+    assert.equal(quota.availableResets, count);
+    assert.equal(quota.windows[0].remaining, 83);
+  }
+  for (const count of [undefined, null, '', '2', true, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(normalizeQuota('codex', { ...usage, rate_limit_reset_credits: { available_count: count } }).availableResets, null);
+  }
+  assert.equal(normalizeQuota('codex', usage).availableResets, null);
+});
+test('Claude counts unused active reset grants without requiring immediate redemption eligibility', () => {
+  const grant = (resets_left, extra = {}) => ({ resets_left, starts_at: new Date(now - 86400000).toISOString(), ends_at: new Date(now + 86400000).toISOString(), paused: false, usable_now: false, ...extra });
+  const usage = { seven_day: { utilization: 50 }, cedar_ember: { eligible: true, grants: [
+    grant(1), grant(2), grant(0), grant(4, { paused: true }),
+    grant(8, { ends_at: new Date(now - 1000).toISOString() }),
+    grant(16, { starts_at: new Date(now + 86400000).toISOString() }),
+  ] } };
+  assert.equal(normalizeQuota('claude', usage).availableResets, 3);
+  for (const grants of [[], [grant(0)], [grant(1, { ends_at: new Date(now - 1000).toISOString() })]]) {
+    assert.equal(normalizeQuota('claude', { ...usage, cedar_ember: { eligible: true, grants } }).availableResets, 0);
+  }
+  for (const block of [undefined, null, {}, { eligible: false, ineligible_reason: 'surface', grants: [] }, { eligible: true }, { eligible: true, grants: [null] }, { eligible: true, grants: [grant(-1)] }, { eligible: true, grants: [grant(1, { ends_at: 'invalid' })] }]) {
+    const quota = normalizeQuota('claude', { ...usage, cedar_ember: block });
+    assert.equal(quota.availableResets, null);
+    assert.equal(quota.windows[0].remaining, 50);
+  }
+});
