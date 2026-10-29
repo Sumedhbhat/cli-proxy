@@ -135,6 +135,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   snapshot = await start();
   for (const account of snapshot.accounts.filter(a => a.quota)) {
     assert.equal(account.quota.fetchedAt, fetchedAt);
+    assert.equal(account.quota.availableResets, cached.get(account.id).availableResets);
     assert.equal(snapshot.ranks.find(r => r.id === account.id).priority, 0);
   }
   await assertReset(reset);

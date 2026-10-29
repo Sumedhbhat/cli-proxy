@@ -34,12 +34,19 @@ test('quota and account views show reset balances, unknown values, and snapshot 
     fetch: async () => ({ ok: true, json: async () => state }), setInterval() {},
   });
   const main = element('#main');
+  const assertAccountBalance = (id, text) => {
+    const row = [...main.innerHTML.matchAll(/<article class="account-row">[\s\S]*?<\/article>/g)]
+      .find(([html]) => html.includes(`data-id="${id}"`))?.[0];
+    assert.ok(row, `missing row for ${id}`);
+    assert.ok(row.includes(text), `expected ${id} to show ${text}`);
+  };
   const assertBalances = () => {
-    assert.match(main.innerHTML, /1 reset available/);
-    assert.match(main.innerHTML, /0 resets available/);
-    assert.equal((main.innerHTML.match(/Resets not reported/g) || []).length, 2);
-    assert.match(main.innerHTML, /Cached · 2 resets available/);
-    assert.match(main.innerHTML, /Stale · 3 resets available/);
+    assertAccountBalance('one', '1 reset available');
+    assertAccountBalance('zero', '0 resets available');
+    assertAccountBalance('unknown', 'Resets not reported');
+    assertAccountBalance('invalid', 'Resets not reported');
+    assertAccountBalance('cached', 'Cached · 2 resets available');
+    assertAccountBalance('stale', 'Stale · 3 resets available');
     assert.doesNotMatch(main.innerHTML, /-1 resets available/);
   };
   assertBalances();
