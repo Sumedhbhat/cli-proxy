@@ -54,6 +54,8 @@ This backs up your user settings under `~/.local/share/cli-proxy/client-config-b
 
 T3's managed Codex mode supplies its own provider settings and overrides the user configuration. On this host, the T3 Codex instance uses the existing CLI runtime with explicit proxy launch arguments. Its historical `openai_token_sharing` provider ID is retained so existing Codex histories can resume, but its endpoint is this proxy. The T3 Claude instance also has the proxy base URL set explicitly. These settings apply to new provider sessions; a running session may need to be reopened. This does not configure CLIs installed locally on another device, such as your Mac.
 
+For provider-specific model lists, use `http://127.0.0.1:8318/codex/v1` as the Codex base URL and `http://127.0.0.1:8318/claude` as the Claude base URL. Their `/v1/models` responses contain only that provider's models. Inference and WebSockets use the same engine transport. The shared `/v1/models` endpoint continues to list all providers.
+
 For manual configuration on another machine:
 
 Claude Code reads the gateway URL and token from its environment. Use the `PROXY_API_KEY` value generated in `.env`:

@@ -20,6 +20,16 @@ test('tailnet dashboard opens without login while inference stays authenticated'
     else if(path.endsWith('/quota/fetch'))res.end(JSON.stringify({seven_day:{utilization:100,resets_at:new Date(Date.now()+(body.auth_index==='soon'?1:4)*86400000).toISOString()}}));
     else if(path.endsWith('/auth-files/fields')){patches.push(body);res.end('{"status":"ok"}');}
     else if(path.endsWith('/anthropic-auth-url'))res.end('{"url":"https://claude.ai/oauth/authorize","state":"test-state"}');
+    else if(path==='/v1/models'){
+      assert.equal(req.headers['if-none-match'],undefined);
+      res.setHeader('ETag','"unfiltered"');
+      if(new URL(req.url,'http://local').searchParams.has('client_version')){
+        res.end(JSON.stringify({models:[{slug:'g5',context_window:400000},{slug:'claude-opus-5-5',context_window:200000}]}));
+      }else res.end(JSON.stringify({object:'list',data:[
+        ...['gpt-6.1-sol','codex-mini-latest','o3','claude-opus-5-5','gemini-pro'].map(id=>({id,object:'model'})),
+        {id:'g5',object:'model',owned_by:'openai'},
+      ]}));
+    }
     else if(path==='/v1/messages'){res.writeHead(429);res.end(JSON.stringify({error:{type:'rate_limit_error',message:'All credentials cooling down'}}));}
     else if(path==='/v1/responses'){
       seen.push({headers:req.headers,body});res.setHeader('Content-Type','text/event-stream');res.write('event: response.created\ndata: {"id":"test"}\n\n');res.end('event: response.completed\ndata: {}\n\n');
@@ -46,6 +56,17 @@ test('tailnet dashboard opens without login while inference stays authenticated'
   assert.doesNotMatch(await(await fetch(base)).text(),/id="login"|CONSOLE_KEY/);
   assert.equal((await fetch(base+'/v0/management/config')).status,404);
   assert.equal((await fetch(base+'/v1/responses',{method:'POST',body:'{}'})).status,401);
+  assert.equal((await fetch(base+'/codex/v1/models')).status,401);
+  const catalogHeaders={Authorization:'Bearer test-api'};
+  for(const [provider,expected] of [['codex',['gpt-6.1-sol','codex-mini-latest','o3','g5']],['claude',['claude-opus-5-5']]]){
+    const catalog=await fetch(base+`/${provider}/v1/models?limit=100`,{headers:{...catalogHeaders,'If-None-Match':'"unfiltered"'}});
+    assert.equal(catalog.status,200);assert.equal(catalog.headers.get('etag'),null);
+    assert.deepEqual((await catalog.json()).data.map(model=>model.id),expected);
+  }
+  assert.equal((await(await fetch(base+'/v1/models',{headers:catalogHeaders})).json()).data.length,6);
+  const capabilities=await fetch(base+'/codex/v1/models?client_version=0.159.0',{headers:catalogHeaders});
+  assert.equal(capabilities.status,200);
+  assert.deepEqual(await capabilities.json(),{models:[{slug:'g5',context_window:400000}]});
   assert.equal((await fetch(base+'/api/refresh',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://evil.test'},body:'{}'})).status,403);
   assert.equal((await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,404);
   const auth={'Content-Type':'application/json'};
@@ -67,12 +88,12 @@ test('tailnet dashboard opens without login while inference stays authenticated'
   assert.equal((await unknown.json()).error.message,'All credentials cooling down');
   const oauth=await fetch(base+'/api/oauth/start',{method:'POST',headers:auth,body:JSON.stringify({provider:'claude'})});
   assert.equal(oauth.status,200);assert.equal((await oauth.json()).state,'test-state');
-  const stream=await fetch(base+'/v1/responses',{method:'POST',headers:{Authorization:'Bearer test-api',Cookie:'private=do-not-forward','Content-Type':'application/json','session_id':'sticky-123'},body:JSON.stringify({model:'test',stream:true})});
+  const stream=await fetch(base+'/codex/v1/responses',{method:'POST',headers:{Authorization:'Bearer test-api',Cookie:'private=do-not-forward','Content-Type':'application/json','session_id':'sticky-123'},body:JSON.stringify({model:'test',stream:true})});
   assert.match(stream.headers.get('content-type'),/event-stream/);assert.match(await stream.text(),/response.completed/);
   assert.equal(seen[0].headers.cookie,undefined);assert.equal(seen[0].headers.session_id,'sticky-123');assert.equal(seen[0].headers.authorization,'Bearer test-api');
   // Verify the authenticated upgrade without a third-party WebSocket client.
   await new Promise((resolve,reject)=>{
-    const req=http.request(base+'/v1/responses',{headers:{Authorization:'Bearer test-api',Connection:'Upgrade',Upgrade:'websocket','Sec-WebSocket-Key':'dGhlIHNhbXBsZSBub25jZQ==','Sec-WebSocket-Version':'13'}});
+    const req=http.request(base+'/codex/v1/responses',{headers:{Authorization:'Bearer test-api',Connection:'Upgrade',Upgrade:'websocket','Sec-WebSocket-Key':'dGhlIHNhbXBsZSBub25jZQ==','Sec-WebSocket-Version':'13'}});
     req.on('error',reject);req.on('upgrade',(res,socket)=>{try{assert.equal(res.statusCode,101);assert.equal(seen.at(-1).headers.authorization,'Bearer test-api');socket.destroy();resolve();}catch(e){reject(e);}});req.end();
   });
 });
