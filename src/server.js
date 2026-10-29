@@ -93,6 +93,11 @@ async function refresh(accountID = null) {
   return refreshing;
 }
 const inferencePath = path => /^\/v1\/(models|messages(?:\/count_tokens)?|chat\/completions|completions|responses(?:\/.*)?)$/.test(path);
+// Provider-specific base URLs share inference transport but expose separate catalogs.
+function scopeRequest(req) {
+  const match = /^\/(codex|claude)(\/v1(?:\/|\?|$).*)/.exec(req.url);
+  if (match) { req.catalogProvider = match[1]; req.url = match[2]; }
+}
 const authorized = req => equal(req.headers.authorization, `Bearer ${apiKey}`) || equal(req.headers['x-api-key'], apiKey);
 function requestModel(body) {
   try { return JSON.parse(body).model; }
@@ -116,6 +121,11 @@ function proxy(req, res, upgradeHead) {
   }
   const target = new URL(req.url, engineURL);
   const headers = { ...req.headers, host: target.host };
+  const filterModels = req.method === 'GET' && url.pathname === '/v1/models' && req.catalogProvider;
+  if (filterModels) {
+    headers['accept-encoding'] = 'identity';
+    delete headers['if-none-match']; delete headers['if-modified-since'];
+  }
   delete headers.cookie; delete headers['x-management-key']; delete headers['proxy-authorization'];
   for (const name of Object.keys(headers)) if (name.startsWith('x-forwarded-')) delete headers[name];
   headers.authorization = `Bearer ${apiKey}`;
@@ -132,6 +142,27 @@ function proxy(req, res, upgradeHead) {
   const upstream = transport.request(target, { method: req.method, headers }, response => {
     if (upgradeHead !== undefined) { res.end(`HTTP/1.1 ${response.statusCode} Upstream rejected upgrade\r\nConnection: close\r\n\r\n`); response.resume(); return; }
     const outputHeaders = { ...response.headers }; delete outputHeaders['set-cookie'];
+    if (filterModels && response.statusCode === 200) {
+      const chunks = []; let size = 0;
+      response.on('data', chunk => {
+        size += chunk.length;
+        if (size > 2 * 1024 * 1024) { response.destroy(); res.destroy(); return; }
+        chunks.push(chunk);
+      });
+      response.on('end', () => {
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString());
+          if (!Array.isArray(payload.data)) throw new Error('Invalid model catalog');
+          payload.data = payload.data.filter(model => modelProvider(model.id) === req.catalogProvider);
+          delete outputHeaders['content-length']; delete outputHeaders['transfer-encoding'];
+          delete outputHeaders.etag; delete outputHeaders['content-encoding'];
+          outputHeaders['cache-control'] = 'no-store';
+          res.writeHead(200, outputHeaders); res.end(JSON.stringify(payload));
+        } catch { json(res, 502, { error: { message: 'Invalid upstream model catalog' } }); }
+      });
+      response.on('error', () => res.destroy());
+      return;
+    }
     if (response.statusCode === 429) {
       const model = requestModel(requestBody);
       const provider = modelProvider(model) ?? (url.pathname.startsWith('/v1/responses') ? 'codex' : null);
@@ -203,6 +234,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   try {
+    scopeRequest(req);
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
     if (inferencePath(path)) { proxy(req, res); return; }
@@ -274,6 +306,7 @@ server.on('upgrade', async (req, socket, head) => {
   // Node drops its socket error listener before 'upgrade'. Without one, a client
   // reset during the cooldown lookup is an uncaught exception.
   socket.on('error', () => socket.destroy());
+  scopeRequest(req);
   const path = new URL(req.url, 'http://localhost').pathname;
   if (path !== '/v1/responses' || !validOrigin(req)) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return; }
   // When every Codex credential is cooling down the engine closes the socket without
