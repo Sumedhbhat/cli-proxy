@@ -9,8 +9,10 @@ export function filterModelCatalog(payload, provider, owners = new Map()) {
   if (!Array.isArray(payload?.[key])) throw new Error('Invalid model catalog');
   const models = payload[key].filter(model => {
     const id = model?.slug ?? model?.id;
-    const owner = model?.owned_by ?? owners.get(id);
-    return (typeof owner === 'string' ? ownerProvider(owner) : modelProvider(id)) === provider;
+    const owner = [model?.owned_by, owners.get(id)].find(value => typeof value === 'string' && value.trim());
+    if (owner) return ownerProvider(owner.trim()) === provider;
+    // Synthetic Claude names do not identify their underlying provider.
+    return !(typeof id === 'string' && /^claude-fable-5-dd-/i.test(id)) && modelProvider(id) === provider;
   });
   const result = { ...payload, [key]: models };
   if ('first_id' in payload) result.first_id = models[0]?.id ?? '';

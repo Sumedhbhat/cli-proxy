@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { filterModelCatalog } from '../src/model-catalog.js';
 
+test('missing ownership preserves genuine model IDs but never infers a synthetic cloak', () => {
+  const payload = { data: [
+    { id: 'gpt-6.1-sol', owned_by: '' },
+    { id: 'claude-opus-5-5', owned_by: ' ' },
+    { id: 'claude-fable-5-dd-rehto', owned_by: '' },
+    { id: 'alias', owned_by: '' },
+    { id: 'gpt-foreign', owned_by: 'google' },
+  ] };
+  const owners = new Map([['alias', 'openai']]);
+  assert.deepEqual(filterModelCatalog(payload, 'codex', owners).data.map(model => model.id), ['gpt-6.1-sol', 'alias']);
+  assert.deepEqual(filterModelCatalog(payload, 'claude', owners).data.map(model => model.id), ['claude-opus-5-5']);
+});
+
 test('provider ownership takes precedence over aliases and cloaked model IDs', () => {
   const payload = { data: [
     { id: 'g5', owned_by: 'openai' },
