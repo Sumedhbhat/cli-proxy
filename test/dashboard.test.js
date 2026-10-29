@@ -38,7 +38,7 @@ test('quota and account views show reset balances, unknown values, and snapshot 
     const row = [...main.innerHTML.matchAll(/<article class="account-row">[\s\S]*?<\/article>/g)]
       .find(([html]) => html.includes(`data-id="${id}"`))?.[0];
     assert.ok(row, `missing row for ${id}`);
-    assert.ok(row.includes(text), `expected ${id} to show ${text}`);
+    assert.equal(row.match(/<div class="account-resets"[^>]*>([^<]*)<\/div>/)?.[1], text, `balance for ${id}`);
   };
   const assertBalances = () => {
     assertAccountBalance('one', '1 reset available');

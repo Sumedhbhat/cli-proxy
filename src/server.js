@@ -84,7 +84,7 @@ async function refresh(accountID = null) {
         }
       }));
       await mkdir(dataDir, { recursive: true, mode: 0o700 });
-      await writeFile(`${dataDir}/quota-cache.json`, JSON.stringify(accounts.map(({id, quota}) => ({id, quota}))), { mode: 0o600 });
+      await writeFile(`${dataDir}/quota-cache.json`, JSON.stringify(accounts.map(({id, quota, quotaError}) => ({id, quota, quotaError}))), { mode: 0o600 });
       lastRefresh = new Date().toISOString();
       try { await applyPriorities(); } catch (e) { schedulerError = e.message; log('error', 'Priority update failed', { detail: e.message }); }
       log('quota', `Refreshed ${refreshedCount} credentials`);
