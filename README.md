@@ -2,7 +2,7 @@
 
 A local console and gateway for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), inspired by the quota dashboard in [Theo's video](https://www.youtube.com/watch?v=D8PikZ1KhUo).
 
-New sessions prefer the account whose weekly quota resets soonest. Existing sessions stay with their account through CLIProxyAPI's session affinity. The console shows remaining quota, provider reset times, account status, and the proposed routing order.
+New sessions prefer the account whose weekly quota resets soonest. Existing sessions stay with their account through CLIProxyAPI's session affinity. The console shows remaining quota, provider reset times, available account resets, account status, and the proposed routing order.
 
 ## Try the interface
 
@@ -128,6 +128,8 @@ Enable scheduling in **Routing settings**. The companion refuses to apply priori
 ## How scheduling works
 
 Every 60 seconds, the companion reads the credential list and polls quotas with at most three requests in flight. It prefers the engine's normalized quota plugin response. Claude and Codex also have direct usage probes through the engine's `api-call` endpoint; provider tokens never enter this app or the browser.
+
+Each Claude and Codex credential shows its unused quota resets on the Quota management and Accounts pages, in both ledger and card views. Codex reports the count in `rate_limit_reset_credits.available_count`; the Claude probe requests `cedar_ember` grants and counts active, unpaused grants. These are redeemable resets held by the account, separate from its scheduled quota reset times. A reported zero displays **0 resets available**; missing or unsupported data displays **Resets not reported**. Failed refreshes retain the previous count with a **Cached** label, and snapshots older than three minutes show **Stale**. The count is a provider snapshot and can change when a reset is spent or expires.
 
 For each provider, healthy accounts with fresh quota receive descending priorities according to their next weekly reset. Claude's Fable weekly bucket is preferred when present; otherwise the first weekly bucket is used. Unknown or stale quotas get priority zero. Accounts with any exhausted reported window get a low priority, while CLIProxyAPI still enforces provider cooldowns and handles failover. Disabled and runtime-only accounts are untouched.
 

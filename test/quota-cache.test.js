@@ -9,11 +9,11 @@ import { join } from 'node:path';
 import { restoreProxyReset } from '../src/claude-compat.js';
 
 test('failed Claude quota refreshes always call upstream and retain cached quota and T3 resets', { timeout: 20000 }, async t => {
-  let mode = 'success', reset = new Date(Date.now() + 3600000).toISOString();
+  let mode = 'success', reset = new Date(Date.now() + 3600000).toISOString(), resetsLeft = 2;
   const calls = { plugin: 0, direct: 0, missing: 0 };
   const dir = await mkdtemp(join(tmpdir(), 'cli-proxy-cache-test-'));
   await writeFile(join(dir, 'settings.json'), JSON.stringify({ intervalSeconds: 3600 }));
-  let child;
+  let child, accountsGate = null, releaseAccounts;
   const stop = async () => {
     if (!child || child.exitCode !== null) return;
     const exited = once(child, 'exit');
@@ -26,6 +26,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
     const body = raw ? JSON.parse(raw) : {}, path = new URL(req.url, 'http://local').pathname;
     res.setHeader('Content-Type', 'application/json');
     if (path.endsWith('/auth-files')) {
+      await accountsGate;
       res.end(JSON.stringify({ files: Object.keys(calls).map(id => ({
         name: `${id}.json`, auth_index: id, provider: 'claude', supports_quota: id !== 'direct',
       })) }));
@@ -39,7 +40,12 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
         return;
       }
       if (mode === 'malformed') { res.end('{'); return; }
-      const quota = mode === 'unsupported' ? {} : { seven_day: { utilization: 100, resets_at: reset } };
+      if (path.endsWith('/api-call')) {
+        assert.equal(body.method, 'GET');
+        assert.equal(new URL(body.url).searchParams.get('cedar_ember'), '1');
+        assert.match(body.header['User-Agent'], /^claude-cli\//);
+      }
+      const quota = mode === 'unsupported' ? {} : { seven_day: { utilization: 100, resets_at: reset }, cedar_ember: { eligible: true, grants: [{ resets_left: resetsLeft }] } };
       res.end(JSON.stringify(path.endsWith('/api-call') ? { status_code: 200, body: JSON.stringify(quota) } : quota));
     } else if (path === '/v1/messages') {
       res.writeHead(429);
@@ -47,6 +53,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
     } else { res.writeHead(404); res.end('{}'); }
   });
   t.after(async () => {
+    releaseAccounts?.();
     await stop();
     engine.closeAllConnections();
     await new Promise(resolve => engine.close(resolve));
@@ -57,16 +64,19 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
   const base = `http://127.0.0.1:${port}`, cachePath = join(dir, 'quota-cache.json');
   const state = async () => (await fetch(base + '/api/state')).json();
-  const start = async () => {
+  const waitForState = async (waitForRefresh = true) => {
+    for (let i = 0; i < 100; i++) {
+      try { const snapshot = await state(); if (!waitForRefresh || (snapshot.lastRefresh && !snapshot.refreshing)) return snapshot; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+    assert.fail('gateway did not reach the expected startup state');
+  };
+  const start = async (waitForRefresh = true) => {
     child = spawn(process.execPath, ['src/server.js'], { cwd: process.cwd(), env: {
       ...process.env, PORT: String(port), ENGINE_URL: `http://127.0.0.1:${engine.address().port}`,
       ENGINE_MANAGEMENT_KEY: 'test-management', PROXY_API_KEY: 'test-api', DATA_DIR: dir,
     }, stdio: 'ignore' });
-    for (let i = 0; i < 100; i++) {
-      try { const snapshot = await state(); if (snapshot.lastRefresh && !snapshot.refreshing) return snapshot; } catch {}
-      await new Promise(resolve => setTimeout(resolve, 30));
-    }
-    assert.fail('gateway did not finish its startup refresh');
+    return waitForState(waitForRefresh);
   };
   const refresh = async id => {
     const response = await fetch(base + '/api/refresh', {
@@ -99,6 +109,8 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   const cached = new Map(snapshot.accounts.map(a => [a.id, a.quota]));
   assert.deepEqual(calls, { plugin: 1, direct: 1, missing: 1 });
   assert.equal(cached.get('missing'), null);
+  assert.equal(cached.get('plugin').availableResets, 2);
+  assert.equal(cached.get('direct').availableResets, 2);
   assert.ok(snapshot.accounts.find(a => a.id === 'missing').quotaError);
   await assertReset(reset);
 
@@ -118,6 +130,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   assert.deepEqual(calls, { ...beforeTargeted, plugin: beforeTargeted.plugin + 1 });
   assert.ok(snapshot.accounts.every(a => a.quotaError));
 
+  const cachedErrors = new Map(snapshot.accounts.map(a => [a.id, a.quotaError]));
   await stop();
   const disk = JSON.parse(await readFile(cachePath, 'utf8'));
   assert.deepEqual(disk.map(a => a.quota), [...cached.values()]);
@@ -125,17 +138,29 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   const fetchedAt = new Date(Date.now() - 3600000).toISOString();
   disk.forEach(a => { if (a.quota) a.quota.fetchedAt = fetchedAt; });
   await writeFile(cachePath, JSON.stringify(disk));
-  snapshot = await start();
+  // Keep the startup refresh pending so it cannot replace the restored error state.
+  accountsGate = new Promise(resolve => { releaseAccounts = resolve; });
+  snapshot = await start(false);
+  assert.equal(snapshot.lastRefresh, null);
+  assert.equal(snapshot.refreshing, true);
+  for (const account of snapshot.accounts) {
+    assert.equal(account.quotaError, cachedErrors.get(account.id));
+    assert.equal(account.quota?.availableResets, cached.get(account.id)?.availableResets);
+  }
+  releaseAccounts(); accountsGate = null;
+  snapshot = await waitForState();
   for (const account of snapshot.accounts.filter(a => a.quota)) {
     assert.equal(account.quota.fetchedAt, fetchedAt);
+    assert.equal(account.quota.availableResets, cached.get(account.id).availableResets);
     assert.equal(snapshot.ranks.find(r => r.id === account.id).priority, 0);
   }
   await assertReset(reset);
 
-  mode = 'success'; reset = new Date(Date.now() + 7200000).toISOString();
+  mode = 'success'; reset = new Date(Date.now() + 7200000).toISOString(); resetsLeft = 0;
   snapshot = await refresh();
   for (const account of snapshot.accounts.filter(a => a.quota)) {
     assert.equal(account.quota.windows[0].resetsAt, reset);
+    assert.equal(account.quota.availableResets, 0);
     assert.notEqual(account.quota.fetchedAt, fetchedAt);
     assert.equal(account.quotaError, null);
   }
