@@ -60,21 +60,24 @@ export function modelProvider(model) {
   return /^claude-/i.test(model) ? 'claude' : /^(?:gpt-|codex|o[1-9])/i.test(model) ? 'codex' : null;
 }
 
-// Use only recent provider data; local timers cannot confirm replenishment.
+// Claude reset timestamps remain useful during quota outages even after the
+// utilization snapshot goes stale. Reuse only provider-reported future resets;
+// local timers still cannot confirm replenishment.
 export function nearestResetInfo(accounts, model, now = Date.now()) {
   const provider = modelProvider(model);
   if (!provider) return null;
-  const resets = accounts.filter(a => a.provider === provider && !a.disabled && !a.runtimeOnly
-    && now - Date.parse(a.quota?.fetchedAt) <= 180000).flatMap(a => {
+  const resets = accounts.filter(a => a.provider === provider && !a.disabled && !a.runtimeOnly && a.quota
+    && (provider === 'claude' || now - Date.parse(a.quota.fetchedAt) <= 180000)).flatMap(a => {
       const windows = a.quota.windows.filter(w => {
         const family = /opus|sonnet|fable/i.exec(w.id + ' ' + w.label)?.[0];
         return !family || model.toLowerCase().includes(family.toLowerCase());
       });
       const blocked = windows.filter(w => w.remaining <= 0);
-      const relevant = blocked.length ? blocked : windows;
+      const relevant = blocked.length ? blocked : windows.filter(w => Date.parse(w.resetsAt) > now);
       const times = relevant.map(w => Date.parse(w.resetsAt));
-      if (!times.length || times.some(t => !Number.isFinite(t) || t <= now)) return [];
+      if (!times.length || times.some(t => !Number.isFinite(t))) return [];
       const time = blocked.length ? Math.max(...times) : Math.min(...times);
+      if (time <= now) return [];
       const window = relevant.find(w => Date.parse(w.resetsAt) === time);
       const rateLimitType = /^five_hour$|^seven_day(?:_opus|_sonnet|_fable)?$/.test(window.id) ? window.id : undefined;
       return [{ resetsAt: new Date(time).toISOString(), rateLimitType, provider }];

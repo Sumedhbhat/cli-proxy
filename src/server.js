@@ -71,7 +71,7 @@ async function refresh(accountID = null) {
       const previous = new Map(accounts.map(a => [a.id, a]));
       const [latest, config] = await Promise.all([engine.accounts(), engine.request('config')]);
       routing = { strategy: config.routing?.strategy, affinity: config.routing?.['session-affinity'] === true };
-      accounts = latest.map(a => ({ ...a, quota: previous.get(a.id)?.quota || null }));
+      accounts = latest.map(a => ({ ...a, quota: previous.get(a.id)?.quota || null, quotaError: previous.get(a.id)?.quotaError || null }));
       connected = true; refreshError = null;
       // A small worker pool avoids blasting every provider when a large pool is imported.
       const queue = accounts.filter(a => !a.disabled && (!accountID || a.id === accountID));

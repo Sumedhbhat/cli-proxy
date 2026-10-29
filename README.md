@@ -88,7 +88,7 @@ Client configuration references: [official OpenAI configuration reference](https
 
 For the Claude proxy instance, set **Settings → Providers → Claude → Binary path** to `~/.local/share/cli-proxy/scripts/claude-client.js` (use the full absolute path). The launcher runs the existing `~/.local/bin/claude` and preserves its stream, adding structured reset metadata only to proxy rate-limit refusals. Claude Code omits this metadata for API-key connections, so HTTP headers alone do not give T3 a reset countdown. New sessions use the launcher; existing sessions may need to be reopened.
 
-The gateway selects resets from fresh quota data for the requested provider. If several exhausted windows block an account, all must reset before that account can be used. Unknown or stale reset times are left unavailable. To remove the compatibility launcher, restore the Claude binary path to `~/.local/bin/claude`.
+Every quota refresh still calls the provider. If the call fails, the gateway keeps the last successful quota and its original fetch time, including across console restarts. The dashboard labels this as **Using cached quota**. Claude rate-limit responses keep returning the cached provider reset time while it is still in the future, even if the quota snapshot is more than three minutes old, so T3 can schedule a retry. A successful refresh replaces the cached quota. If several exhausted windows block an account, the gateway waits for the latest of their resets; across accounts, it reports the earliest reset. Missing reset times and resets that have already passed are left unavailable. To remove the compatibility launcher, restore the Claude binary path to `~/.local/bin/claude`.
 
 ### Codex reset times in T3
 
