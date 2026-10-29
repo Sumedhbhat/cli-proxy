@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { Engine } from './engine.js';
 import { rankAccounts, nearestResetInfo, modelProvider } from './quota.js';
 import { codexUsageLimit, codexLimitError } from './codex-limit.js';
+import { filterModelCatalog } from './model-catalog.js';
 import { demoAccounts } from './demo.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
@@ -112,6 +113,24 @@ async function codexLimit(model) {
     return codexUsageLimit(await authFilesRead.files, model);
   } catch (e) { authFilesRead = null; log('error', 'Codex cooldown lookup failed', { detail: e.message }); return null; }
 }
+// Codex's capability catalog omits ownership. Read the ordinary OpenAI catalog
+// to classify its slugs without discarding the client's capability metadata.
+async function catalogOwners() {
+  const response = await fetch(new URL('/v1/models', engineURL), {
+    headers: { Authorization: `Bearer ${apiKey}`, 'User-Agent': 'cli-proxy', 'Accept-Encoding': 'identity' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) { await response.body?.cancel(); throw new Error('Model ownership lookup failed'); }
+  const chunks = []; let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > 2 * 1024 * 1024) throw new Error('Model catalog too large');
+    chunks.push(chunk);
+  }
+  const payload = JSON.parse(Buffer.concat(chunks).toString());
+  if (!Array.isArray(payload.data)) throw new Error('Invalid model ownership catalog');
+  return new Map(payload.data.map(model => [model.id, model.owned_by]));
+}
 function proxy(req, res, upgradeHead) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const allowed = authorized(req);
@@ -149,15 +168,15 @@ function proxy(req, res, upgradeHead) {
         if (size > 2 * 1024 * 1024) { response.destroy(); res.destroy(); return; }
         chunks.push(chunk);
       });
-      response.on('end', () => {
+      response.on('end', async () => {
         try {
           const payload = JSON.parse(Buffer.concat(chunks).toString());
-          if (!Array.isArray(payload.data)) throw new Error('Invalid model catalog');
-          payload.data = payload.data.filter(model => modelProvider(model.id) === req.catalogProvider);
+          const owners = Array.isArray(payload?.models) ? await catalogOwners() : new Map();
+          const filtered = filterModelCatalog(payload, req.catalogProvider, owners);
           delete outputHeaders['content-length']; delete outputHeaders['transfer-encoding'];
           delete outputHeaders.etag; delete outputHeaders['content-encoding'];
           outputHeaders['cache-control'] = 'no-store';
-          res.writeHead(200, outputHeaders); res.end(JSON.stringify(payload));
+          res.writeHead(200, outputHeaders); res.end(JSON.stringify(filtered));
         } catch { json(res, 502, { error: { message: 'Invalid upstream model catalog' } }); }
       });
       response.on('error', () => res.destroy());

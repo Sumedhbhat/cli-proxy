@@ -23,7 +23,12 @@ test('tailnet dashboard opens without login while inference stays authenticated'
     else if(path==='/v1/models'){
       assert.equal(req.headers['if-none-match'],undefined);
       res.setHeader('ETag','"unfiltered"');
-      res.end(JSON.stringify({object:'list',data:['gpt-6.1-sol','codex-mini-latest','o3','claude-opus-5-5','gemini-pro'].map(id=>({id,object:'model'}))}));
+      if(new URL(req.url,'http://local').searchParams.has('client_version')){
+        res.end(JSON.stringify({models:[{slug:'g5',context_window:400000},{slug:'claude-opus-5-5',context_window:200000}]}));
+      }else res.end(JSON.stringify({object:'list',data:[
+        ...['gpt-6.1-sol','codex-mini-latest','o3','claude-opus-5-5','gemini-pro'].map(id=>({id,object:'model'})),
+        {id:'g5',object:'model',owned_by:'openai'},
+      ]}));
     }
     else if(path==='/v1/messages'){res.writeHead(429);res.end(JSON.stringify({error:{type:'rate_limit_error',message:'All credentials cooling down'}}));}
     else if(path==='/v1/responses'){
@@ -53,12 +58,15 @@ test('tailnet dashboard opens without login while inference stays authenticated'
   assert.equal((await fetch(base+'/v1/responses',{method:'POST',body:'{}'})).status,401);
   assert.equal((await fetch(base+'/codex/v1/models')).status,401);
   const catalogHeaders={Authorization:'Bearer test-api'};
-  for(const [provider,expected] of [['codex',['gpt-6.1-sol','codex-mini-latest','o3']],['claude',['claude-opus-5-5']]]){
+  for(const [provider,expected] of [['codex',['gpt-6.1-sol','codex-mini-latest','o3','g5']],['claude',['claude-opus-5-5']]]){
     const catalog=await fetch(base+`/${provider}/v1/models?limit=100`,{headers:{...catalogHeaders,'If-None-Match':'"unfiltered"'}});
     assert.equal(catalog.status,200);assert.equal(catalog.headers.get('etag'),null);
     assert.deepEqual((await catalog.json()).data.map(model=>model.id),expected);
   }
-  assert.equal((await(await fetch(base+'/v1/models',{headers:catalogHeaders})).json()).data.length,5);
+  assert.equal((await(await fetch(base+'/v1/models',{headers:catalogHeaders})).json()).data.length,6);
+  const capabilities=await fetch(base+'/codex/v1/models?client_version=0.159.0',{headers:catalogHeaders});
+  assert.equal(capabilities.status,200);
+  assert.deepEqual(await capabilities.json(),{models:[{slug:'g5',context_window:400000}]});
   assert.equal((await fetch(base+'/api/refresh',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://evil.test'},body:'{}'})).status,403);
   assert.equal((await fetch(base+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,404);
   const auth={'Content-Type':'application/json'};
