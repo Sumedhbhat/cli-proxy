@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { restoreProxyReset } from '../src/claude-compat.js';
+import { claudeBinary } from '../src/claude-binary.js';
 
 const args = process.argv.slice(2);
 const streaming = args.some((a, i) => a === '--output-format=stream-json' || a === '--output-format' && args[i + 1] === 'stream-json');
-const child = spawn(process.env.CLI_PROXY_CLAUDE_BINARY || join(homedir(), '.local/bin/claude'), args, { stdio: ['inherit', streaming ? 'pipe' : 'inherit', 'inherit'] });
+const child = spawn(claudeBinary(), args, { stdio: ['inherit', streaming ? 'pipe' : 'inherit', 'inherit'] });
 if (streaming) {
   const decoder = new StringDecoder('utf8');
   let pending = '';

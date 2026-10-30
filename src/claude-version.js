@@ -1,17 +1,17 @@
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { compareVersions, followUpdates } from './claude-binary.js';
 
 // Floor for the reported Claude Code version, used when the local CLI cannot be queried.
 export const fallbackClaudeVersion = '2.1.310';
 const ttlMs = 3600000; // Claude Code auto-updates, so a long-running gateway re-checks hourly.
 const cache = new Map();
 
-const parts = version => version.split('.').map(Number);
-const newer = (a, b) => { const [x, y] = [parts(a), parts(b)]; for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i] ? a : b; return a; };
+const newer = (a, b) => compareVersions(a, b) >= 0 ? a : b;
 
 // An explicit override wins; otherwise prefer `claude` on PATH, then the native installer location.
-export const defaultClaudeBinary = () => process.env.CLI_PROXY_CLAUDE_BINARY || ['claude', join(homedir(), '.local/bin/claude')];
+export const defaultClaudeBinary = () => process.env.CLI_PROXY_CLAUDE_BINARY ? followUpdates(process.env.CLI_PROXY_CLAUDE_BINARY) : ['claude', join(homedir(), '.local/bin/claude')];
 
 // SIGKILL so a binary that ignores SIGTERM cannot leave the quota refresh pending.
 const installedVersion = binary => new Promise(resolve => execFile(binary, ['--version'], { timeout: 10000, killSignal: 'SIGKILL' }, (error, stdout) => {
