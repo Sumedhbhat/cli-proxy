@@ -21,8 +21,8 @@ const out=resolve(process.argv[2]||'.local/review.html');
 await mkdir(resolve(out,'..'),{recursive:true});
 let embeddedCSS = css;
 for (const weight of [400,500,600,700]) {
-  const font = await readFile(new URL(`../public/fonts/poppins-${weight}.ttf`, import.meta.url));
-  embeddedCSS = embeddedCSS.replace(`./fonts/poppins-${weight}.ttf`, `data:font/ttf;base64,${font.toString('base64')}`);
+  const font = await readFile(new URL(`../public/fonts/poppins-${weight}.woff2`, import.meta.url));
+  embeddedCSS = embeddedCSS.replace(`./fonts/poppins-${weight}.woff2`, `data:font/woff2;base64,${font.toString('base64')}`);
 }
-const document=html.replace('<link rel="stylesheet" href="./style.css">',`<style>${embeddedCSS}</style>`).replace('<script type="module" src="./app.js"></script>',`<script type="module">${bootstrap}\n${js}</script>`);
+const document=html.replace(/<link rel="preload"[^>]*>/g,'').replace('<link rel="stylesheet" href="./style.css">',`<style>${embeddedCSS}</style>`).replace('<script type="module" src="./app.js"></script>',`<script type="module">${bootstrap}\n${js}</script>`);
 await writeFile(out,document);console.log(out);
