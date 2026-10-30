@@ -10,16 +10,22 @@ const cache = new Map();
 const parts = version => version.split('.').map(Number);
 const newer = (a, b) => { const [x, y] = [parts(a), parts(b)]; for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i] ? a : b; return a; };
 
-export const defaultClaudeBinary = () => process.env.CLI_PROXY_CLAUDE_BINARY || join(homedir(), '.local/bin/claude');
+// An explicit override wins; otherwise prefer `claude` on PATH, then the native installer location.
+export const defaultClaudeBinary = () => process.env.CLI_PROXY_CLAUDE_BINARY || ['claude', join(homedir(), '.local/bin/claude')];
 
-export function claudeVersion(binary = defaultClaudeBinary()) {
-  const hit = cache.get(binary);
+// SIGKILL so a binary that ignores SIGTERM cannot leave the quota refresh pending.
+const installedVersion = binary => new Promise(resolve => execFile(binary, ['--version'], { timeout: 10000, killSignal: 'SIGKILL' }, (error, stdout) => {
+  resolve(!error && /^(\d+\.\d+\.\d+)\b/.exec(stdout.trim())?.[1]);
+}));
+
+export function claudeVersion(binaries = defaultClaudeBinary()) {
+  const key = [binaries].flat().join('\0'), hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttlMs) return hit.version;
-  const version = new Promise(resolve => execFile(binary, ['--version'], { timeout: 10000 }, (error, stdout) => {
-    const found = !error && /^(\d+\.\d+\.\d+)\b/.exec(stdout.trim())?.[1];
-    resolve(found ? newer(found, fallbackClaudeVersion) : fallbackClaudeVersion);
-  }));
-  cache.set(binary, { at: Date.now(), version });
+  const version = (async () => {
+    for (const binary of [binaries].flat()) { const found = await installedVersion(binary); if (found) return newer(found, fallbackClaudeVersion); }
+    return fallbackClaudeVersion;
+  })();
+  cache.set(key, { at: Date.now(), version });
   return version;
 }
 

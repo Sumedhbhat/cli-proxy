@@ -11,12 +11,14 @@ import { fallbackClaudeVersion } from '../src/claude-version.js';
 // The Claude quota probe identifies itself as Claude Code. It used to send a hardcoded
 // `claude-cli/2.1.288` that was never bumped, so every Claude Code update left the proxy
 // reporting an older app than the one installed. The probe must ask the installed CLI.
-async function probeUserAgent(t, script) {
+async function probeUserAgent(t, script, extraBinaries = []) {
   const dir = await mkdtemp(join(tmpdir(), 'cli-proxy-claude-version-'));
   const binary = join(dir, 'claude');
   await writeFile(binary, `#!/bin/sh\n${script}\n`, { mode: 0o700 });
   let userAgent;
   const server = http.createServer(async (req, res) => {
+    // Other test files probe for free ports, so ignore anything that is not the engine call.
+    if (!req.url.endsWith('/v0/management/api-call')) { res.writeHead(404); res.end(); return; }
     let raw = ''; for await (const chunk of req) raw += chunk;
     userAgent = JSON.parse(raw).header['User-Agent'];
     res.setHeader('Content-Type', 'application/json');
@@ -24,7 +26,7 @@ async function probeUserAgent(t, script) {
   });
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const engine = new Engine({ url: `http://127.0.0.1:${server.address().port}`, key: 'test', claudeBinary: binary });
+  const engine = new Engine({ url: `http://127.0.0.1:${server.address().port}`, key: 'test', claudeBinary: [...extraBinaries, binary] });
   await engine.quota({ id: '1', provider: 'claude', supportsQuota: false });
   return userAgent;
 }
@@ -34,6 +36,15 @@ test('Claude quota probe reports the installed Claude Code version', async t => 
 });
 
 test('Claude quota probe never reports a version older than the known fallback', async t => {
+  assert.ok(fallbackClaudeVersion.localeCompare('2.1.310', 'en', { numeric: true }) >= 0, 'the floor must not drop below the version that fixed this regression');
   assert.equal(await probeUserAgent(t, 'echo "2.0.1 (Claude Code)"'), `claude-cli/${fallbackClaudeVersion} (external, cli)`);
   assert.equal(await probeUserAgent(t, 'exit 1'), `claude-cli/${fallbackClaudeVersion} (external, cli)`);
+});
+
+test('Claude quota probe tries the next installation when one cannot report a version', async t => {
+  assert.equal(await probeUserAgent(t, 'echo "2.4.502 (Claude Code)"', ['/nonexistent/claude']), 'claude-cli/2.4.502 (external, cli)');
+});
+
+test('Claude version lookup gives up on a binary that ignores SIGTERM', { timeout: 15000 }, async t => {
+  assert.equal(await probeUserAgent(t, "trap '' TERM; sleep 60"), `claude-cli/${fallbackClaudeVersion} (external, cli)`);
 });
