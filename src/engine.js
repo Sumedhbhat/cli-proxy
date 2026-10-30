@@ -1,7 +1,8 @@
 import { normalizeQuota } from './quota.js';
+import { claudeUserAgent, defaultClaudeBinary } from './claude-version.js';
 
 export class Engine {
-  constructor({ url, key }) { this.url = url.replace(/\/$/, ''); this.key = key; }
+  constructor({ url, key, claudeBinary = defaultClaudeBinary() }) { this.url = url.replace(/\/$/, ''); this.key = key; this.claudeBinary = claudeBinary; }
   async request(path, { method = 'GET', body, raw = false, timeoutMs = 20000 } = {}) {
     const response = await fetch(`${this.url}/v0/management/${path}`, { method, headers: { Authorization: `Bearer ${this.key}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     if (!response.ok) throw new Error(`Engine ${path.split('?')[0]} returned HTTP ${response.status}`);
@@ -17,11 +18,12 @@ export class Engine {
       return normalizeQuota(account.provider, data);
     }
     const probes = {
-      claude: { url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1', header: { Authorization: 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-cli/2.1.288 (external, cli)' } },
+      claude: { url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1', header: { Authorization: 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20' } },
       codex: { url: 'https://chatgpt.com/backend-api/wham/usage', header: { Authorization: 'Bearer $TOKEN$' } },
     };
     const probe = probes[account.provider];
     if (!probe) throw new Error('No quota adapter; install a CLIProxyAPI quota plugin for this provider');
+    if (account.provider === 'claude') probe.header['User-Agent'] = await claudeUserAgent(this.claudeBinary);
     if (account.provider === 'codex' && account.accountId) probe.header['Chatgpt-Account-Id'] = account.accountId;
     const response = await this.request('api-call', { method: 'POST', body: { auth_index: account.id, method: 'GET', ...probe } });
     if (response.status_code !== 200) throw new Error(`Quota endpoint returned HTTP ${response.status_code}`);
