@@ -39,9 +39,13 @@ function json(res, status, body) { send(res, status, { 'Content-Type': 'applicat
 // The dashboard is opened from phones and laptops over the tailnet, where every
 // kilobyte and round trip shows. Compress anything worth compressing.
 const compress = (body, encoding) => encoding === 'br' ? brotliCompressSync(body, { params: { [zlib.BROTLI_PARAM_QUALITY]: 5 } }) : gzipSync(body);
+// Encodings the client accepts with a nonzero quality, so `br;q=0` rules Brotli out.
+const acceptedEncodings = header => new Set((header || '').split(',').map(part => part.trim().split(/\s*;\s*/)).filter(([name, ...params]) => name && !params.some(p => /^q=0(?:\.0*)?$/i.test(p))).map(([name]) => name.toLowerCase()));
+// If-None-Match uses weak comparison: `W/"x"` and `"x"` match, and `*` matches anything.
+const etagMatches = (header, etag) => header != null && (header.trim() === '*' || (header.match(/(?:W\/)?"[^"]*"/g) || []).some(tag => tag.replace(/^W\//, '') === etag.replace(/^W\//, '')));
 function send(res, status, headers, body, variants = null) {
-  const accept = res.req?.headers['accept-encoding'] || '';
-  const encoding = body.length < 1024 || headers['Content-Type'].startsWith('font/') ? null : /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null;
+  const accept = acceptedEncodings(res.req?.headers['accept-encoding']);
+  const encoding = body.length < 1024 || headers['Content-Type'].startsWith('font/') ? null : accept.has('br') ? 'br' : accept.has('gzip') ? 'gzip' : null;
   if (encoding) body = variants?.[encoding] || compress(body, encoding);
   res.writeHead(status, { ...headers, ...(encoding && { 'Content-Encoding': encoding }), Vary: 'Accept-Encoding', 'Content-Length': body.length });
   res.end(res.req?.method === 'HEAD' ? undefined : body);
@@ -346,7 +350,7 @@ const server = http.createServer(async (req, res) => {
     const asset = assets[path];
     const pinned = path.startsWith('/fonts/') || url.searchParams.get('v') === asset.hash;
     const headers = { 'Content-Type': asset.type, 'Cache-Control': pinned ? 'public, max-age=31536000, immutable' : 'no-cache', ETag: asset.etag };
-    if (req.headers['if-none-match']?.split(/\s*,\s*/).includes(asset.etag)) { res.writeHead(304, { ...headers, Vary: 'Accept-Encoding' }); res.end(); return; }
+    if (etagMatches(req.headers['if-none-match'], asset.etag)) { res.writeHead(304, { ...headers, Vary: 'Accept-Encoding' }); res.end(); return; }
     send(res, 200, headers, asset.body, asset);
   } catch (e) { if (!res.headersSent) json(res, e.status || 502, { error: e.message }); else res.destroy(); }
 });
