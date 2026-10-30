@@ -183,5 +183,7 @@ main.addEventListener('change', async e => {
 });
 main.addEventListener('input',e=>{if(e.target.id==='search'){search=e.target.value;const pos=e.target.selectionStart;render();$('#search').focus();$('#search').setSelectionRange(pos,pos);}});
 main.addEventListener('submit',async e=>{if(e.target.id!=='callback-form')return;e.preventDefault();try{await api('oauth/callback',{method:'POST',body:{provider:$('#oauth-panel').dataset.provider,redirect_url:new FormData(e.target).get('redirect_url')}});toast('Callback submitted. Waiting for engine confirmation.');}catch(e){toast(e.message);}});
-await load();
+// The page carries the state it was served with, so the first render needs no request.
+const initialState = $('#initial-state')?.textContent;
+if (initialState) { state = JSON.parse(initialState); render(); } else await load();
 setInterval(()=>{if(!busy&&!['INPUT','SELECT'].includes(document.activeElement.tagName))load(['quota','overview','logs','routing'].includes(page));},15000);

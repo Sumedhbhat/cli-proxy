@@ -1,7 +1,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
+import { brotliCompressSync, gzipSync, constants as zlib } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { Engine } from './engine.js';
@@ -34,7 +35,21 @@ let schedulerError = null;
 const events = [];
 const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const log = (type, message, details = {}) => { events.unshift({ at: new Date().toISOString(), type, message, ...details }); events.splice(200); };
-function json(res, status, body) { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(body)); }
+function json(res, status, body) { send(res, status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, Buffer.from(JSON.stringify(body))); }
+// The dashboard is opened from phones and laptops over the tailnet, where every
+// kilobyte and round trip shows. Compress anything worth compressing.
+const compress = (body, encoding) => encoding === 'br' ? brotliCompressSync(body, { params: { [zlib.BROTLI_PARAM_QUALITY]: 5 } }) : gzipSync(body);
+// Encodings the client accepts with a nonzero quality, so `br;q=0` rules Brotli out.
+const acceptedEncodings = header => new Set((header || '').split(',').map(part => part.trim().split(/\s*;\s*/)).filter(([name, ...params]) => name && !params.some(p => /^q=0(?:\.0*)?$/i.test(p))).map(([name]) => name.toLowerCase()));
+// If-None-Match uses weak comparison: `W/"x"` and `"x"` match, and `*` matches anything.
+const etagMatches = (header, etag) => header != null && (header.trim() === '*' || (header.match(/(?:W\/)?"[^"]*"/g) || []).some(tag => tag.replace(/^W\//, '') === etag.replace(/^W\//, '')));
+function send(res, status, headers, body, variants = null) {
+  const accept = acceptedEncodings(res.req?.headers['accept-encoding']);
+  const encoding = body.length < 1024 || headers['Content-Type'].startsWith('font/') ? null : accept.has('br') ? 'br' : accept.has('gzip') ? 'gzip' : null;
+  if (encoding) body = variants?.[encoding] || compress(body, encoding);
+  res.writeHead(status, { ...headers, ...(encoding && { 'Content-Encoding': encoding }), Vary: 'Accept-Encoding', 'Content-Length': body.length });
+  res.end(res.req?.method === 'HEAD' ? undefined : body);
+}
 async function body(req, max = 2 * 1024 * 1024) {
   let length = 0; const chunks = [];
   for await (const chunk of req) { length += chunk.length; if (length > max) { const e = new Error('Request too large'); e.status = 413; throw e; } chunks.push(chunk); }
@@ -248,6 +263,18 @@ function proxy(req, res, upgradeHead) {
     res.on('close', () => upstream.destroy()); req.pipe(upstream);
   }
 }
+const dashboardState = () => ({ demo, connected, accounts, settings, routing, refreshing: Boolean(refreshing), lastRefresh, refreshError, schedulerError, ranks: rankAccounts(accounts), events });
+// Assets are read once at startup. The page links app.js and style.css by content
+// hash so browsers keep them indefinitely, and fonts are cached until renamed.
+// A repeat visit then fetches only the page, which carries the dashboard state
+// so the first render needs no further request.
+const assets = {};
+for (const [path, name, type] of [['/app.js', 'app.js', 'text/javascript; charset=utf-8'], ['/style.css', 'style.css', 'text/css; charset=utf-8'], ...[400, 500, 600, 700].map(w => [`/fonts/poppins-${w}.woff2`, `fonts/poppins-${w}.woff2`, 'font/woff2'])]) {
+  const body = await readFile(`${publicDir}${name}`);
+  const hash = createHash('sha256').update(body).digest('base64url').slice(0, 16);
+  assets[path] = { body, type, hash, etag: `W/"${hash}"`, br: compress(body, 'br'), gzip: compress(body, 'gzip') };
+}
+const indexHTML = (await readFile(`${publicDir}index.html`, 'utf8')).replace(/\.\/(app\.js|style\.css)"/g, (_, name) => `./${name}?v=${assets[`/${name}`].hash}"`);
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
@@ -263,7 +290,7 @@ const server = http.createServer(async (req, res) => {
       // Dashboard access is provided by the loopback listener and Tailscale Serve.
       // Client inference below /v1 still requires the proxy API key.
       if (path === '/api/state' && req.method === 'GET') {
-        json(res, 200, { demo, connected, accounts, settings, routing, refreshing: Boolean(refreshing), lastRefresh, refreshError, schedulerError, ranks: rankAccounts(accounts), events }); return;
+        json(res, 200, dashboardState()); return;
       }
       if (path === '/api/refresh' && req.method === 'POST') {
         const data = await body(req);
@@ -314,11 +341,17 @@ const server = http.createServer(async (req, res) => {
       }
       json(res, 404, { error: 'Unknown endpoint' }); return;
     }
-    const files = { '/': ['index.html','text/html'], '/app.js': ['app.js','text/javascript'], '/style.css': ['style.css','text/css'] };
-    for (const weight of [400,500,600,700]) files[`/fonts/poppins-${weight}.ttf`] = [`fonts/poppins-${weight}.ttf`, 'font/ttf'];
-    if (!files[path] || !['GET','HEAD'].includes(req.method)) { json(res, 404, { error: 'Not found' }); return; }
-    const [name, type] = files[path]; res.setHeader('Content-Type', `${type}; charset=utf-8`); res.setHeader('Cache-Control','no-cache');
-    res.end(req.method === 'HEAD' ? undefined : await readFile(`${publicDir}${name}`));
+    if (!['GET','HEAD'].includes(req.method) || (path !== '/' && !assets[path])) { json(res, 404, { error: 'Not found' }); return; }
+    if (path === '/') {
+      const state = JSON.stringify(dashboardState()).replace(/</g, '\\u003c');
+      send(res, 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, Buffer.from(indexHTML.replace('</body>', () => `<script id="initial-state" type="application/json">${state}</script>\n</body>`)));
+      return;
+    }
+    const asset = assets[path];
+    const pinned = path.startsWith('/fonts/') || url.searchParams.get('v') === asset.hash;
+    const headers = { 'Content-Type': asset.type, 'Cache-Control': pinned ? 'public, max-age=31536000, immutable' : 'no-cache', ETag: asset.etag };
+    if (etagMatches(req.headers['if-none-match'], asset.etag)) { res.writeHead(304, { ...headers, Vary: 'Accept-Encoding' }); res.end(); return; }
+    send(res, 200, headers, asset.body, asset);
   } catch (e) { if (!res.headersSent) json(res, e.status || 502, { error: e.message }); else res.destroy(); }
 });
 server.on('upgrade', async (req, socket, head) => {
