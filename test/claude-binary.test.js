@@ -28,6 +28,7 @@ test('a binary pinned inside the Claude versions directory runs the newest insta
     for (const version of ['2.1.309', '2.1.310', '2.1.312', '2.1.314']) await fake(join(versions, version), `${version} (Claude Code)`);
     await writeFile(join(versions, '2.1.315.download'), 'partial');
     await writeFile(join(versions, '2.1.316'), 'not executable', { mode: 0o600 });
+    await mkdir(join(versions, '2.1.317'));
     return join(versions, '2.1.310');
   }), '2.1.314 (Claude Code)');
 });

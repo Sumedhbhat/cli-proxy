@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Engine } from '../src/engine.js';
@@ -47,4 +47,28 @@ test('Claude quota probe tries the next installation when one cannot report a ve
 
 test('Claude version lookup gives up on a binary that ignores SIGTERM', { timeout: 15000 }, async t => {
   assert.equal(await probeUserAgent(t, "trap '' TERM; sleep 60"), `claude-cli/${fallbackClaudeVersion} (external, cli)`);
+});
+
+test('Claude quota probe picks up a release installed while the gateway is running', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'cli-proxy-claude-versions-')), versions = join(dir, 'claude/versions');
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(versions, { recursive: true });
+  const install = version => writeFile(join(versions, version), `#!/bin/sh\necho "${version} (Claude Code)"\n`, { mode: 0o700 });
+  await install('2.4.600');
+  let userAgent;
+  const server = http.createServer(async (req, res) => {
+    if (!req.url.endsWith('/v0/management/api-call')) { res.writeHead(404); res.end(); return; }
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    userAgent = JSON.parse(raw).header['User-Agent'];
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ status_code: 200, body: JSON.stringify({ five_hour: { utilization: 1, resets_at: new Date(Date.now() + 3600000).toISOString() } }) }));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const engine = new Engine({ url: `http://127.0.0.1:${server.address().port}`, key: 'test', claudeBinary: join(versions, '2.4.600') });
+  await engine.quota({ id: '1', provider: 'claude', supportsQuota: false });
+  assert.equal(userAgent, 'claude-cli/2.4.600 (external, cli)');
+  await install('2.4.601');
+  await engine.quota({ id: '1', provider: 'claude', supportsQuota: false });
+  assert.equal(userAgent, 'claude-cli/2.4.601 (external, cli)');
 });
