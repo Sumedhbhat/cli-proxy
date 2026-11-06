@@ -2,7 +2,7 @@ import { normalizeQuota } from './quota.js';
 import { claudeUserAgent, defaultClaudeBinary } from './claude-version.js';
 
 export class Engine {
-  constructor({ url, key, claudeBinary = defaultClaudeBinary() }) { this.url = url.replace(/\/$/, ''); this.key = key; this.claudeBinary = claudeBinary; }
+  constructor({ url, key, claudeBinary = defaultClaudeBinary() }) { this.url = url.replace(/\/$/, ''); this.key = key; this.claudeBinary = claudeBinary; this.resetDetailsRetryAt = new Map(); }
   async request(path, { method = 'GET', body, raw = false, timeoutMs = 20000 } = {}) {
     const response = await fetch(`${this.url}/v0/management/${path}`, { method, headers: { Authorization: `Bearer ${this.key}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     if (!response.ok) throw new Error(`Engine ${path.split('?')[0]} returned HTTP ${response.status}`);
@@ -31,15 +31,20 @@ export class Engine {
     }
     // Usage only reports the balance; the separate read-only endpoint lists expiry dates.
     const resets = data.rate_limit_reset_credits;
-    if (account.provider === 'codex' && resets?.available_count > 0 && !Array.isArray(resets.credits)) {
+    if (account.provider === 'codex' && resets?.available_count > 0 && !Array.isArray(resets.credits) && !(this.resetDetailsRetryAt.get(account.id) > Date.now())) {
+      // Optional failures back off for five minutes instead of delaying every quota poll.
+      this.resetDetailsRetryAt.set(account.id, Date.now() + 300000);
       try {
-        const response = await this.request('api-call', { method: 'POST', body: {
+        const response = await this.request('api-call', { method: 'POST', timeoutMs: 2000, body: {
           auth_index: account.id, method: 'GET', url: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
           header: { Authorization: 'Bearer $TOKEN$', ...(account.accountId ? { 'Chatgpt-Account-Id': account.accountId } : {}) },
         } });
         if (response.status_code === 200) {
           const details = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
-          data = { ...data, rate_limit_reset_credits: { ...resets, credits: details?.credits } };
+          if (Array.isArray(details?.credits)) {
+            data = { ...data, rate_limit_reset_credits: { ...resets, credits: details.credits } };
+            this.resetDetailsRetryAt.delete(account.id);
+          }
         }
       } catch { /* Expiry lookup failure must not discard a successful quota refresh. */ }
     }
