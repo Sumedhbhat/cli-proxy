@@ -96,9 +96,17 @@ function quotaCell(w, account) {
 function accountResets(account) {
   const count = account.quota?.availableResets;
   if (count == null && !['claude', 'codex'].includes(account.provider)) return '';
-  const label = Number.isSafeInteger(count) && count >= 0 ? `${count} ${count === 1 ? 'reset' : 'resets'} available` : 'Resets not reported';
+  const known = Number.isSafeInteger(count) && count >= 0;
+  const label = known ? `${count} ${count === 1 ? 'reset' : 'resets'} available` : 'Resets not reported';
   const age = account.quotaError && account.quota ? 'Cached · ' : account.quota && !fresh(account) ? 'Stale · ' : '';
-  return `<div class="account-resets" title="${esc(`Unused quota resets reported by the provider${account.quota?.fetchedAt ? ` · Last checked ${date(account.quota.fetchedAt)}` : ''}`)}">${age}${label}</div>`;
+  const expiresAt = account.quota?.nextResetExpiresAt;
+  let expiry = 'Expiry not reported';
+  if (expiresAt && Number.isFinite(Date.parse(expiresAt))) {
+    const when = new Date(expiresAt).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+    expiry = Date.parse(expiresAt) > Date.now() ? `Next reset expires ${relative(expiresAt)} · ${when}` : `Reset expiry passed · ${when} · refresh needed`;
+  }
+  return `<div class="account-resets" title="${esc(`Unused quota resets reported by the provider${account.quota?.fetchedAt ? ` · Last checked ${date(account.quota.fetchedAt)}` : ''}`)}">${age}${label}</div>`
+    + (known && count > 0 ? `<div class="account-reset-expiry">${age}${esc(expiry)}</div>` : '');
 }
 function rows(accounts, manage = false) {
   const sorted = [...accounts].sort((a,b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'remaining' ? (weekly(a)?.remaining ?? 101) - (weekly(b)?.remaining ?? 101) : (Date.parse(weekly(a)?.resetsAt) || Infinity) - (Date.parse(weekly(b)?.resetsAt) || Infinity));

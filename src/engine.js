@@ -13,21 +13,37 @@ export class Engine {
     return (await this.authFiles()).map(a => ({ id: String(a.auth_index || a.id || a.name), name: a.name, email: a.email || '', provider: a.provider || a.type || 'unknown', disabled: Boolean(a.disabled), runtimeOnly: Boolean(a.runtime_only), status: a.status || 'unknown', priority: Number(a.priority) || 0, supportsQuota: Boolean(a.supports_quota), accountId: a.id_token?.chatgpt_account_id || null, plan: a.plan_type || '', success: Number(a.success) || 0, failed: Number(a.failed) || 0 }));
   }
   async quota(account) {
+    let data;
     if (account.supportsQuota) {
-      const data = await this.request('quota/fetch', { method: 'POST', body: { auth_index: account.id } });
-      return normalizeQuota(account.provider, data);
+      data = await this.request('quota/fetch', { method: 'POST', body: { auth_index: account.id } });
+    } else {
+      const probes = {
+        claude: { url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1', header: { Authorization: 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20' } },
+        codex: { url: 'https://chatgpt.com/backend-api/wham/usage', header: { Authorization: 'Bearer $TOKEN$' } },
+      };
+      const probe = probes[account.provider];
+      if (!probe) throw new Error('No quota adapter; install a CLIProxyAPI quota plugin for this provider');
+      if (account.provider === 'claude') probe.header['User-Agent'] = await claudeUserAgent(this.claudeBinary);
+      if (account.provider === 'codex' && account.accountId) probe.header['Chatgpt-Account-Id'] = account.accountId;
+      const response = await this.request('api-call', { method: 'POST', body: { auth_index: account.id, method: 'GET', ...probe } });
+      if (response.status_code !== 200) throw new Error(`Quota endpoint returned HTTP ${response.status_code}`);
+      data = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
     }
-    const probes = {
-      claude: { url: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1', header: { Authorization: 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20' } },
-      codex: { url: 'https://chatgpt.com/backend-api/wham/usage', header: { Authorization: 'Bearer $TOKEN$' } },
-    };
-    const probe = probes[account.provider];
-    if (!probe) throw new Error('No quota adapter; install a CLIProxyAPI quota plugin for this provider');
-    if (account.provider === 'claude') probe.header['User-Agent'] = await claudeUserAgent(this.claudeBinary);
-    if (account.provider === 'codex' && account.accountId) probe.header['Chatgpt-Account-Id'] = account.accountId;
-    const response = await this.request('api-call', { method: 'POST', body: { auth_index: account.id, method: 'GET', ...probe } });
-    if (response.status_code !== 200) throw new Error(`Quota endpoint returned HTTP ${response.status_code}`);
-    return normalizeQuota(account.provider, typeof response.body === 'string' ? JSON.parse(response.body) : response.body);
+    // Usage only reports the balance; the separate read-only endpoint lists expiry dates.
+    const resets = data.rate_limit_reset_credits;
+    if (account.provider === 'codex' && resets?.available_count > 0 && !Array.isArray(resets.credits)) {
+      try {
+        const response = await this.request('api-call', { method: 'POST', body: {
+          auth_index: account.id, method: 'GET', url: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
+          header: { Authorization: 'Bearer $TOKEN$', ...(account.accountId ? { 'Chatgpt-Account-Id': account.accountId } : {}) },
+        } });
+        if (response.status_code === 200) {
+          const details = typeof response.body === 'string' ? JSON.parse(response.body) : response.body;
+          data = { ...data, rate_limit_reset_credits: { ...resets, credits: details?.credits } };
+        }
+      } catch { /* Expiry lookup failure must not discard a successful quota refresh. */ }
+    }
+    return normalizeQuota(account.provider, data);
   }
   patch(account, fields) { return this.request('auth-files/fields', { method: 'PATCH', body: { name: account.name, ...fields } }); }
   status(account, disabled) { return this.request('auth-files/status', { method: 'PATCH', body: { name: account.name, disabled } }); }
