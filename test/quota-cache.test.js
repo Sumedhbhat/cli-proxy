@@ -10,6 +10,7 @@ import { restoreProxyReset } from '../src/claude-compat.js';
 
 test('failed Claude quota refreshes always call upstream and retain cached quota and T3 resets', { timeout: 20000 }, async t => {
   let mode = 'success', reset = new Date(Date.now() + 3600000).toISOString(), resetsLeft = 2;
+  const expiresAt = new Date(Date.now() + 86400000).toISOString();
   const calls = { plugin: 0, direct: 0, missing: 0 };
   const dir = await mkdtemp(join(tmpdir(), 'cli-proxy-cache-test-'));
   await writeFile(join(dir, 'settings.json'), JSON.stringify({ intervalSeconds: 3600 }));
@@ -45,7 +46,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
         assert.equal(new URL(body.url).searchParams.get('cedar_ember'), '1');
         assert.match(body.header['User-Agent'], /^claude-cli\//);
       }
-      const quota = mode === 'unsupported' ? {} : { seven_day: { utilization: 100, resets_at: reset }, cedar_ember: { eligible: true, grants: [{ resets_left: resetsLeft }] } };
+      const quota = mode === 'unsupported' ? {} : { seven_day: { utilization: 100, resets_at: reset }, cedar_ember: { eligible: true, grants: [{ resets_left: resetsLeft, ends_at: expiresAt }] } };
       res.end(JSON.stringify(path.endsWith('/api-call') ? { status_code: 200, body: JSON.stringify(quota) } : quota));
     } else if (path === '/v1/messages') {
       res.writeHead(429);
@@ -111,6 +112,8 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   assert.equal(cached.get('missing'), null);
   assert.equal(cached.get('plugin').availableResets, 2);
   assert.equal(cached.get('direct').availableResets, 2);
+  assert.equal(cached.get('plugin').nextResetExpiresAt, expiresAt);
+  assert.equal(cached.get('direct').nextResetExpiresAt, expiresAt);
   assert.ok(snapshot.accounts.find(a => a.id === 'missing').quotaError);
   await assertReset(reset);
 
@@ -146,6 +149,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   for (const account of snapshot.accounts) {
     assert.equal(account.quotaError, cachedErrors.get(account.id));
     assert.equal(account.quota?.availableResets, cached.get(account.id)?.availableResets);
+    assert.equal(account.quota?.nextResetExpiresAt, cached.get(account.id)?.nextResetExpiresAt);
   }
   releaseAccounts(); accountsGate = null;
   snapshot = await waitForState();
@@ -161,6 +165,7 @@ test('failed Claude quota refreshes always call upstream and retain cached quota
   for (const account of snapshot.accounts.filter(a => a.quota)) {
     assert.equal(account.quota.windows[0].resetsAt, reset);
     assert.equal(account.quota.availableResets, 0);
+    assert.equal(account.quota.nextResetExpiresAt, null);
     assert.notEqual(account.quota.fetchedAt, fetchedAt);
     assert.equal(account.quotaError, null);
   }

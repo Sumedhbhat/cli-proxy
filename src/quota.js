@@ -12,22 +12,34 @@ function quotaWindow(id, label, used, reset) {
 }
 const resetCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 function availableResets(provider, data, now) {
-  if (provider === 'codex') return resetCount(data.rate_limit_reset_credits?.available_count);
-  if (provider !== 'claude') return null;
+  const unknown = { availableResets: null, nextResetExpiresAt: null };
+  const nearest = times => times.sort((a, b) => Date.parse(a) - Date.parse(b))[0] || null;
+  if (provider === 'codex') {
+    const block = data.rate_limit_reset_credits;
+    const count = resetCount(block?.available_count);
+    const expiries = (Array.isArray(block?.credits) ? block.credits : [])
+      .filter(credit => credit?.status === 'available' && credit.is_supported_by_plan !== false)
+      .map(credit => timestamp(credit.expires_at)).filter(time => time && Date.parse(time) > now);
+    return { availableResets: count, nextResetExpiresAt: count > 0 ? nearest(expiries) : null };
+  }
+  if (provider !== 'claude') return unknown;
   const block = data.cedar_ember;
   // An ineligible caller (for example an older CLI) does not establish a zero balance.
-  if (block?.eligible !== true || !Array.isArray(block.grants)) return null;
+  if (block?.eligible !== true || !Array.isArray(block.grants)) return unknown;
   let available = 0;
+  const expiries = [];
   for (const grant of block.grants) {
     const count = resetCount(grant?.resets_left);
-    if (count == null) return null;
+    if (count == null) return unknown;
     const startsAt = timestamp(grant.starts_at), endsAt = timestamp(grant.ends_at);
-    if ((grant.starts_at != null && !startsAt) || (grant.ends_at != null && !endsAt)) return null;
+    if ((grant.starts_at != null && !startsAt) || (grant.ends_at != null && !endsAt)) return unknown;
     if (grant.paused === true || (startsAt && Date.parse(startsAt) > now) || (endsAt && Date.parse(endsAt) <= now)) continue;
     // usable_now describes redemption eligibility, not how many unused resets are held.
     available += count;
+    if (count > 0 && endsAt) expiries.push(endsAt);
   }
-  return resetCount(available);
+  const count = resetCount(available);
+  return { availableResets: count, nextResetExpiresAt: count > 0 ? nearest(expiries) : null };
 }
 export function normalizeQuota(provider, data) {
   const now = Date.now();
@@ -50,7 +62,7 @@ export function normalizeQuota(provider, data) {
   }
   windows = windows.filter(Boolean);
   if (!windows.length) throw new Error('Provider returned no supported quota windows');
-  return { windows, availableResets: availableResets(provider, data, now), plan: data.subscription?.plan || data.plan_type || null, fetchedAt: new Date(now).toISOString() };
+  return { windows, ...availableResets(provider, data, now), plan: data.subscription?.plan || data.plan_type || null, fetchedAt: new Date(now).toISOString() };
 }
 export function weeklyWindow(account) {
   const windows = account.quota?.windows || [];

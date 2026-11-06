@@ -139,6 +139,7 @@ select, .search { min-height: 42px; padding: 8px 13px; border: 1px solid var(--l
 .account-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 15px/1.5 var(--mono); letter-spacing: -.3px; }
 .account-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; color: var(--faint); font-size: 13px; }
 .account-resets { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.account-reset-expiry { color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .next-badge { padding: 2px 7px; border-radius: 4px; background: color-mix(in srgb, var(--green) 10%, transparent); color: var(--green); font-size: 10px; }
 .paused-badge { color: var(--yellow); }
 .quota-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 14px; }

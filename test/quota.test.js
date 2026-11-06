@@ -63,3 +63,45 @@ test('Claude counts unused active reset grants without requiring immediate redem
     assert.equal(quota.windows[0].remaining, 50);
   }
 });
+
+test('Claude reports the earliest expiry among unused active grants, independent of grant order', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-01T00:00:00Z') });
+  const soon = '2026-11-10T00:00:00.000Z', later = '2026-12-01T00:00:00.000Z';
+  const usage = { seven_day: { utilization: 50, resets_at: '2026-11-02T00:00:00Z' }, cedar_ember: { eligible: true, grants: [
+    { resets_left: 1, ends_at: later }, { resets_left: 1, ends_at: soon, usable_now: false },
+    { resets_left: 0, ends_at: '2026-11-03T00:00:00Z' },
+    { resets_left: 1, ends_at: '2026-11-04T00:00:00Z', paused: true },
+    { resets_left: 1, ends_at: '2026-10-31T00:00:00Z' },
+    { resets_left: 1, starts_at: later, ends_at: '2027-01-01T00:00:00Z' },
+  ] } };
+  const quota = normalizeQuota('claude', usage);
+  assert.equal(quota.availableResets, 2);
+  assert.equal(quota.nextResetExpiresAt, soon);
+  usage.cedar_ember.grants.reverse();
+  assert.equal(normalizeQuota('claude', usage).nextResetExpiresAt, soon);
+  for (const grants of [[], [{ resets_left: 1 }], [{ resets_left: 1, ends_at: null }], [{ resets_left: 0, ends_at: soon }], [{ resets_left: 1, ends_at: 'invalid' }]]) {
+    assert.equal(normalizeQuota('claude', { ...usage, cedar_ember: { eligible: true, grants } }).nextResetExpiresAt, null);
+  }
+});
+
+test('Codex reset expiry uses available supported credits rather than quota renewal or redeemed credits', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-01T00:00:00Z') });
+  const soon = '2026-11-30T19:36:32.781Z';
+  const usage = { rate_limit: { primary_window: { used_percent: 17, reset_at: 1793577600 } }, rate_limit_reset_credits: { available_count: 2, credits: [
+    { status: 'available', expires_at: '2026-12-01T22:12:49.917421Z' },
+    { status: 'available', expires_at: '2026-11-30T19:36:32.781944Z', is_supported_by_plan: true },
+    { status: 'redeemed', expires_at: '2026-11-02T00:00:00Z' },
+    { status: 'available', is_supported_by_plan: false, expires_at: '2026-11-03T00:00:00Z' },
+    { status: 'available', expires_at: '2026-10-31T00:00:00Z' },
+    { status: 'available', expires_at: 'invalid' }, null,
+  ] } };
+  const quota = normalizeQuota('codex', usage);
+  assert.equal(quota.availableResets, 2);
+  assert.equal(quota.nextResetExpiresAt, soon);
+  for (const count of [0, null, -1, '2']) {
+    assert.equal(normalizeQuota('codex', { ...usage, rate_limit_reset_credits: { ...usage.rate_limit_reset_credits, available_count: count } }).nextResetExpiresAt, null);
+  }
+  for (const credits of [undefined, [], {}, [{ status: 'available' }]]) {
+    assert.equal(normalizeQuota('codex', { ...usage, rate_limit_reset_credits: { available_count: 2, credits } }).nextResetExpiresAt, null);
+  }
+});
