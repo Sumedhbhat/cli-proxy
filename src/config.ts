@@ -10,6 +10,7 @@ const Environment = Schema.Struct({
   apiKey: Schema.String,
   demo: Schema.Boolean,
   dataDir: Schema.String,
+  ledgerDeviceSecret: Schema.String,
 });
 export interface Configuration {
   readonly port: number;
@@ -18,6 +19,8 @@ export interface Configuration {
   readonly dataDir: string;
   readonly managementKey: Redacted.Redacted<string>;
   readonly apiKey: Redacted.Redacted<string>;
+  // Shared with the engine's ledger plugin to sign device attribution.
+  readonly ledgerDeviceSecret: Redacted.Redacted<string> | null;
 }
 export class AppConfig extends Context.Service<AppConfig, Configuration>()(
   "cli-proxy/Config",
@@ -33,6 +36,7 @@ export const loadConfig = Effect.gen(function* () {
       process.env.DATA_DIR ||
         fileURLToPath(new URL("../.local/", import.meta.url)),
     ),
+    ledgerDeviceSecret: process.env.LEDGER_DEVICE_SECRET || "",
   }).pipe(
     Effect.mapError(
       () =>
@@ -66,10 +70,18 @@ export const loadConfig = Effect.gen(function* () {
         "Run npm run setup first, or npm run demo to explore without credentials.",
     });
   }
+  if (config.ledgerDeviceSecret && config.ledgerDeviceSecret.length < 32)
+    return yield* new InputError({
+      status: 400,
+      message: "LEDGER_DEVICE_SECRET must be at least 32 characters",
+    });
   return {
     ...config,
     managementKey: Redacted.make(config.managementKey),
     apiKey: Redacted.make(config.apiKey),
+    ledgerDeviceSecret: config.ledgerDeviceSecret
+      ? Redacted.make(config.ledgerDeviceSecret)
+      : null,
   };
 });
 export const ConfigLive = Layer.effect(AppConfig, loadConfig);

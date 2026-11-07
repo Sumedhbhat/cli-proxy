@@ -8,7 +8,10 @@ import { modelProvider, nearestResetInfo } from "./quota.ts";
 import { codexLimitError } from "./codex-limit.ts";
 import { filterModelCatalog } from "./model-catalog.ts";
 import { JsonObject, record, records, TransportError } from "./domain.ts";
-import { equal, json, readBounded } from "./http.ts";
+import { json, readBounded } from "./http.ts";
+import { DEVICE_HEADER, Devices } from "./devices.ts";
+import type { Identity } from "./devices.ts";
+import { Ingest } from "./ingest.ts";
 
 export type Provider = "claude" | "codex";
 export function scopeRequest(req: http.IncomingMessage): Provider | undefined {
@@ -22,9 +25,6 @@ export const inferencePath = (path: string) =>
   /^\/v1\/(models|messages(?:\/count_tokens)?|chat\/completions|completions|responses(?:\/.*)?)$/.test(
     path,
   );
-export const authorized = (req: http.IncomingMessage, key: string) =>
-  equal(req.headers.authorization, `Bearer ${key}`) ||
-  equal(req.headers["x-api-key"], key);
 function requestModel(body: string): string | undefined {
   try {
     const model = record(JSON.parse(body)).model;
@@ -79,6 +79,23 @@ const pipeResponse = (
 export const makeGateway = Effect.gen(function* () {
   const config = yield* AppConfig;
   const app = yield* Application;
+  const devices = yield* Devices;
+  const ingest = yield* Ingest;
+  const count = (
+    identity: Identity,
+    provider: string,
+    transport: "http" | "websocket",
+    status: number,
+    clientClosed: boolean,
+  ) =>
+    ingest.countRequest({
+      provider,
+      principalKind: identity.kind === "device" ? "device" : "shared-key",
+      deviceId: identity.kind === "device" ? identity.id : "",
+      transport,
+      statusClass: status ? `${Math.floor(status / 100)}xx` : "none",
+      clientClosed,
+    });
   const apiKey = Redacted.value(config.apiKey);
   const catalogOwners = Effect.scoped(
     Effect.gen(function* () {
@@ -133,6 +150,7 @@ export const makeGateway = Effect.gen(function* () {
   const forward = (
     req: http.IncomingMessage,
     res: http.ServerResponse | Duplex,
+    identity: Identity,
     provider?: Provider,
     upgradeHead?: Buffer,
   ) =>
@@ -163,6 +181,10 @@ export const makeGateway = Effect.gen(function* () {
           if (name.startsWith("x-forwarded-")) delete headers[name];
         headers.authorization = `Bearer ${apiKey}`;
         if (headers["x-api-key"]) headers["x-api-key"] = apiKey;
+        // Only the gateway may attribute a device; a client-sent value is dropped.
+        delete headers[DEVICE_HEADER];
+        const attribution = devices.attribution(identity);
+        if (attribution) headers[DEVICE_HEADER] = attribution;
         const transport = target.protocol === "https:" ? https : http;
         const upstream = yield* Effect.acquireRelease(
           Effect.sync(() => {
@@ -403,7 +425,8 @@ export const makeGateway = Effect.gen(function* () {
     provider?: Provider,
   ) =>
     Effect.gen(function* () {
-      if (config.demo || !authorized(req, apiKey)) {
+      const identity = config.demo ? null : yield* devices.identify(req);
+      if (!identity) {
         json(res, config.demo ? 503 : 401, {
           error: {
             message: config.demo
@@ -413,11 +436,36 @@ export const makeGateway = Effect.gen(function* () {
         });
         return;
       }
-      yield* forward(req, res, provider);
+      const path = new URL(req.url || "/", "http://localhost").pathname;
+      // Model listings and token counts generate nothing to account for.
+      const counted = req.method === "POST" && !path.endsWith("/count_tokens");
+      const family =
+        provider ??
+        (path.startsWith("/v1/messages")
+          ? "claude"
+          : path.startsWith("/v1/responses")
+            ? "codex"
+            : "other");
+      yield* forward(req, res, identity, provider).pipe(
+        Effect.ensuring(
+          counted
+            ? Effect.suspend(() =>
+                count(
+                  identity,
+                  family,
+                  "http",
+                  res.headersSent ? res.statusCode : 0,
+                  !res.writableFinished,
+                ),
+              )
+            : Effect.void,
+        ),
+      );
     });
   const upgrade = (req: http.IncomingMessage, socket: Duplex, head: Buffer) =>
     Effect.gen(function* () {
-      if (config.demo || !authorized(req, apiKey)) {
+      const identity = config.demo ? null : yield* devices.identify(req);
+      if (!identity) {
         socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         return;
       }
@@ -446,7 +494,8 @@ export const makeGateway = Effect.gen(function* () {
         });
         return;
       }
-      yield* forward(req, socket, undefined, head);
+      yield* count(identity, "codex", "websocket", 101, false);
+      yield* forward(req, socket, identity, undefined, head);
     });
   return { proxy, upgrade };
 });

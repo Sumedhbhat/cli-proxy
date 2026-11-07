@@ -7,10 +7,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { command } from "../src/command.ts";
 import { InputError } from "../src/domain.ts";
+import { configureLedgerOrSkip } from "../src/ledger-setup.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const local = join(root, ".local");
-const version = "8.0.23"; // Published 2026-10-09; satisfies the 14-day dependency policy.
+// Published 2026-11-07. Adopted before the 14-day cooldown by explicit owner
+// decision: it carries the usage fixes and plugin host the ledger relies on.
+const version = "8.0.59";
 const platforms: Record<string, string> = { linux: "linux", darwin: "darwin" };
 const architectures: Record<string, string> = {
   x64: "amd64",
@@ -124,6 +127,15 @@ const setup = Effect.gen(function* () {
       flag: "wx",
     });
   }
+  yield* configureLedgerOrSkip(
+    join(root, ".env"),
+    join(local, "engine.yaml"),
+    local,
+  );
+  if (!(yield* fs.exists(join(local, "plugins/cli-proxy-ledger.so"))))
+    console.log(
+      "Usage ledger configured. Build its engine plugin with: npm run plugin:build (needs Go and a C compiler).",
+    );
   console.log(
     "Setup complete. Secrets are in .env (owner-readable only). Existing configuration was preserved.",
   );

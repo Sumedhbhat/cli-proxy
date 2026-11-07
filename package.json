@@ -10,6 +10,8 @@
     "demo": "node src/server.ts --demo",
     "setup": "node scripts/setup.ts",
     "engine": "node scripts/engine.ts",
+    "plugin:build": "node scripts/build-plugin.ts",
+    "test:engine": "node --test test/ledger-engine.test.ts",
     "service:install": "node scripts/install-service.ts",
     "clients:configure": "node scripts/configure-clients.ts",
     "restore-priorities": "node scripts/restore-priorities.ts",
