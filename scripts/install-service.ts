@@ -89,8 +89,8 @@ const install = Effect.gen(function* () {
         Effect.catch(() => Effect.succeed(false)),
       );
       if (active) {
-        yield* systemctl(["stop", unit]);
         stopped.push(unit);
+        yield* systemctl(["stop", unit]);
       }
     }
   }

@@ -9,7 +9,14 @@ import { StorageLive } from "./storage.ts";
 import { Application, ApplicationLive } from "./application.ts";
 import { loadAssets } from "./assets.ts";
 import { inferencePath, makeGateway, scopeRequest } from "./gateway.ts";
-import { decodeBody, etagMatches, json, send, validOrigin } from "./http.ts";
+import {
+  decodeBody,
+  etagMatches,
+  json,
+  requestURL,
+  send,
+  validOrigin,
+} from "./http.ts";
 import { InputError, JsonObject, record } from "./domain.ts";
 
 const RefreshInput = Schema.Struct({ id: Schema.optional(Schema.String) });
@@ -47,7 +54,7 @@ export const serve = Effect.gen(function* () {
       "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     );
     const provider = scopeRequest(req);
-    const url = new URL(req.url || "/", "http://localhost");
+    const url = yield* requestURL(req);
     const path = url.pathname;
     if (inferencePath(path)) {
       yield* gateway.proxy(req, res, provider);
@@ -253,17 +260,23 @@ export const serve = Effect.gen(function* () {
         socket.on("error", () => {
           socket.destroy();
         });
-        scopeRequest(req);
-        const path = new URL(req.url || "/", "http://localhost").pathname;
-        if (path !== "/v1/responses" || !validOrigin(req)) {
-          socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-          return;
-        }
         const fiber = run(
-          gateway.upgrade(req, socket, head).pipe(
-            Effect.catch(() =>
+          Effect.gen(function* () {
+            scopeRequest(req);
+            const { pathname } = yield* requestURL(req);
+            if (pathname !== "/v1/responses" || !validOrigin(req)) {
+              socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+              return;
+            }
+            yield* gateway.upgrade(req, socket, head);
+          }).pipe(
+            Effect.catch((error) =>
               Effect.sync(() => {
-                socket.destroy();
+                if (error instanceof InputError)
+                  socket.end(
+                    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+                  );
+                else socket.destroy();
               }),
             ),
             Effect.catchDefect(() =>

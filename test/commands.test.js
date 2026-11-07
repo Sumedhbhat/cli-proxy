@@ -218,3 +218,73 @@ test(
     );
   },
 );
+
+test(
+  "interrupting a pending service stop restarts the originally active unit",
+  { timeout: 15000 },
+  async (t) => {
+    const { spawn } = await import("node:child_process");
+    const { once } = await import("node:events");
+    const { dir, source } = await installationFixture(t);
+    const bin = join(dir, "bin"),
+      configDir = join(dir, "config"),
+      log = join(dir, "commands.jsonl"),
+      stopped = join(dir, "stopped");
+    await mkdir(bin);
+    await mkdir(join(configDir, "systemd/user"), { recursive: true });
+    await writeFile(
+      join(configDir, "systemd/user/cli-proxy-console.service"),
+      "existing",
+    );
+    await writeFile(
+      join(bin, "loginctl"),
+      `#!${process.execPath}\nif(process.argv.includes('show-user'))console.log('yes');`,
+      { mode: 0o700 },
+    );
+    await writeFile(
+      join(bin, "systemctl"),
+      `#!${process.execPath}\nconst fs=require('node:fs'); const args=process.argv.slice(2); fs.appendFileSync(process.env.CLI_PROXY_TEST_LOG,JSON.stringify(args)+'\\n'); if(args.includes('stop')){ fs.writeFileSync(process.env.CLI_PROXY_TEST_STOPPED,'stopped'); setInterval(()=>{},1000); }`,
+      { mode: 0o700 },
+    );
+    const child = spawn(process.execPath, ["scripts/install-service.ts"], {
+      cwd: source,
+      env: {
+        ...process.env,
+        PATH: bin + ":" + process.env.PATH,
+        XDG_DATA_HOME: join(dir, "data"),
+        XDG_CONFIG_HOME: configDir,
+        CLI_PROXY_TEST_LOG: log,
+        CLI_PROXY_TEST_STOPPED: stopped,
+      },
+      stdio: "ignore",
+    });
+    const exited = once(child, "exit");
+    t.after(() => {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+    });
+    let committedStop = false;
+    for (let attempts = 0; attempts < 200; attempts++) {
+      try {
+        await access(stopped);
+        committedStop = true;
+        break;
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(committedStop, true);
+    child.kill("SIGTERM");
+    const [code] = await exited;
+    assert.equal(code, 130);
+    const commands = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .map(JSON.parse);
+    assert.deepEqual(
+      commands
+        .filter((args) => args.includes("start"))
+        .map((args) => args.at(-1)),
+      ["cli-proxy-console.service"],
+    );
+  },
+);

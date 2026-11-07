@@ -4,6 +4,13 @@ import { timingSafeEqual } from "node:crypto";
 import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
 import { InputError, JsonObject, TransportError } from "./domain.ts";
 
+export const requestURL = (req: IncomingMessage) =>
+  Effect.try({
+    try: () => new URL(req.url || "/", "http://localhost"),
+    catch: () =>
+      new InputError({ status: 400, message: "Invalid request URL" }),
+  });
+
 export const equal = (a: unknown, b: unknown) =>
   typeof a === "string" &&
   typeof b === "string" &&

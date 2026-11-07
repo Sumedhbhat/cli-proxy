@@ -232,3 +232,126 @@ test(
     );
   },
 );
+
+test(
+  "malformed unauthenticated upgrade targets return 400 without stopping the gateway",
+  { timeout: 10000 },
+  async (t) => {
+    const { base, child } = await startGateway(t, (req, res) => {
+      if (!defaults(req, res)) res.end("{}");
+    });
+    const { connect } = await import("node:net");
+    const response = await new Promise((resolve, reject) => {
+      let received = "";
+      const socket = connect(new URL(base).port, "127.0.0.1", () => {
+        socket.write(
+          "GET http://[ HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        );
+      });
+      socket.on("data", (chunk) => (received += chunk));
+      socket.on("end", () => resolve(received));
+      socket.on("error", reject);
+    });
+    assert.match(response, /^HTTP\/1\.1 400 Bad Request/);
+    assert.equal(child.exitCode, null);
+    assert.equal((await fetch(base + "/healthz")).status, 200);
+    assert.equal((await fetch(base + "/v1/models")).status, 401);
+  },
+);
+
+test(
+  "a queued refresh completes after its original owner is cancelled",
+  { timeout: 5000 },
+  async () => {
+    const { Deferred, Effect, Fiber, Redacted } = await import("effect");
+    const { makeApplication } = await import("../src/application.ts");
+    const { AppConfig } = await import("../src/config.ts");
+    const { Engine } = await import("../src/engine.ts");
+    const { Storage } = await import("../src/storage.ts");
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make();
+        let calls = 0,
+          saved = 0;
+        const account = {
+          id: "one",
+          name: "one.json",
+          provider: "codex",
+          email: "",
+          disabled: false,
+          runtimeOnly: false,
+          status: "active",
+          priority: 0,
+          supportsQuota: true,
+          accountId: null,
+          plan: "",
+          success: 0,
+          failed: 0,
+          quota: null,
+          quotaError: null,
+        };
+        const app = yield* makeApplication.pipe(
+          Effect.provideService(AppConfig, {
+            demo: false,
+            dataDir: "",
+            port: 0,
+            engineURL: "http://unused",
+            apiKey: Redacted.make("unused"),
+            managementKey: Redacted.make("unused"),
+          }),
+          Effect.provideService(Engine, {
+            accounts: () => Effect.succeed([account]),
+            request: () => Effect.succeed({ routing: {} }),
+            authFiles: () => Effect.succeed([]),
+            quota: () =>
+              Effect.gen(function* () {
+                calls++;
+                if (calls === 2) {
+                  yield* Deferred.succeed(entered, undefined);
+                  yield* Effect.never;
+                }
+                return {
+                  windows: [
+                    {
+                      id: "weekly",
+                      label: "Weekly limit",
+                      remaining: calls === 1 ? 80 : 60,
+                      resetsAt: null,
+                    },
+                  ],
+                  fetchedAt: new Date().toISOString(),
+                  availableResets: null,
+                  nextResetExpiresAt: null,
+                  plan: null,
+                };
+              }),
+          }),
+          Effect.provideService(Storage, {
+            loadSettings: Effect.succeed({
+              scheduler: false,
+              intervalSeconds: 60,
+            }),
+            loadQuota: Effect.succeed([]),
+            saveQuota: () =>
+              Effect.sync(() => {
+                saved++;
+              }),
+          }),
+        );
+        yield* app.refresh();
+        const owner = yield* app.refresh().pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const waiter = yield* app.refresh().pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(owner);
+        yield* Fiber.join(waiter);
+        const state = yield* app.snapshot;
+        assert.equal(calls, 3);
+        assert.equal(saved, 2);
+        assert.equal(state.accounts[0].quota.windows[0].remaining, 60);
+        assert.equal(state.connected, true);
+        assert.equal(state.refreshing, false);
+      }).pipe(Effect.timeout(3000)),
+    );
+  },
+);

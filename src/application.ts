@@ -195,13 +195,10 @@ export const makeApplication = Effect.gen(function* () {
               });
             }),
           ),
-          Effect.ensuring(
-            Effect.all([
-              update((s) => ({ ...s, refreshing: false })),
-              Ref.update(generation, (n) => n + 1),
-            ]),
-          ),
+          Effect.ensuring(update((s) => ({ ...s, refreshing: false }))),
         );
+        // Interruption has no result to share. A queued caller must do the refresh.
+        yield* Ref.update(generation, (n) => n + 1);
       }),
     );
   });
