@@ -5,6 +5,58 @@ import { makeApplication } from "../src/application.ts";
 import { account, quota, applicationLayer } from "./application-fixture.ts";
 
 test(
+  "OAuth confirmation cannot reuse an account list captured before completion",
+  { timeout: 5000 },
+  async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const accounts = [account("B")];
+        let requested = false;
+        const app = yield* makeApplication.pipe(
+          Effect.provide(
+            applicationLayer({
+              accounts,
+              request: (path) => {
+                if (path === "config") return Effect.succeed({ routing: {} });
+                assert.equal(path, "get-auth-status?state=connected%2Fstate");
+                return Effect.succeed({ status: "ok" });
+              },
+              quota: (account) =>
+                Effect.gen(function* () {
+                  if (requested && account.id === "B") {
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  return quota(75);
+                }),
+            }),
+          ),
+        );
+        yield* app.refresh();
+        requested = true;
+        const full = yield* app.refresh().pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        accounts.push(account("A")); // The engine persists a completed OAuth account asynchronously.
+        const connected = yield* Effect.gen(function* () {
+          assert.deepEqual(yield* app.oauthStatus("connected/state"), {
+            status: "ok",
+          });
+          yield* app.refresh();
+        }).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(full);
+        yield* Fiber.join(connected);
+        const added = (yield* app.snapshot).accounts.find((a) => a.id === "A");
+        assert.equal(added?.quota?.windows[0]?.remaining, 75);
+      }).pipe(Effect.timeout(3000)),
+    );
+  },
+);
+
+test(
   "an imported account is refreshed after an older full refresh finishes",
   { timeout: 5000 },
   async () => {

@@ -280,6 +280,18 @@ export const makeApplication = Effect.gen(function* () {
     );
     yield* refresh();
   });
+  const oauthStatus = Effect.fn("Application.oauthStatus")(function* (
+    state: string,
+  ) {
+    const status = yield* engine.request(
+      `get-auth-status?state=${encodeURIComponent(state)}`,
+    );
+    if (record(status).status === "ok") {
+      // Wait for any older refresh to finish before invalidating its account list.
+      yield* mutations.withPermit(invalidateRefreshCoverage);
+    }
+    return status;
+  });
   const [files, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     engine.authFiles(3000),
     5000,
@@ -304,6 +316,7 @@ export const makeApplication = Effect.gen(function* () {
     setScheduler,
     setDisabled,
     importAccount,
+    oauthStatus,
     codexLimit,
   };
 });

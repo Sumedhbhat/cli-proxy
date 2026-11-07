@@ -11,6 +11,7 @@ This review compared CLI Proxy at `61f674920383a6da2a60a854e1c3dae808671a8a` wit
 5. **Ownership lookup duplicated bounded reading.** It now uses the shared reader and JSON decoder. A scoped abort controller owns the fetch through body consumption, so disconnects and timeouts cancel the unfinished lookup.
 6. **Refresh fixtures could drift from their services.** The refresh tests now use TypeScript layers checked against the production services. Unused mutation methods fail explicitly. The compiler checks these fixtures and the provider-test adapter in `npm run typecheck`.
 7. **Import could reuse a snapshot from before the new account existed.** The import route now calls an Application action that serializes the upload and invalidates older refresh coverage. It refreshes after releasing the mutation permit, so coalescing cannot acknowledge the import using a pre-import account list.
+8. **OAuth confirmation had the same stale-list race.** The dashboard refreshes after observing `status: "ok"`. Application now invalidates old coverage under the mutation permit before returning that confirmation. Pending and failed status checks remain ordinary engine queries.
 
 The cleanup also uses OpenCode's [constant-recovery convention](https://github.com/anomalyco/opencode/blob/21bf6b493b76efcf3769ade999f05163760d61af/script/ast-grep/effect-simplifications/rules/no-effect-catch-succeed.yml): `Effect.orElseSucceed` expresses a fallback without another effect wrapper. Shared rank and event types derive from their schemas; quota selection narrows optional values without non-null assertions.
 
@@ -24,4 +25,4 @@ OpenCode's Bun tooling, monorepo layer graph, import conventions, and API framew
 
 ## Verification
 
-Run `npm run check`. New coverage includes different targeted scopes, targeted-to-full overlap, a full refresh covering an account, matching targeted and full requests sharing work, resumed accounts and imports following an active refresh, disconnected upstreams, oversized catalogs and refusals, ownership-lookup failures and cancellation, and original engine error causes. Existing cancellation, streaming, quota, persistence, and installation tests remain in the full suite.
+Run `npm run check`. New coverage includes different targeted scopes, targeted-to-full overlap, a full refresh covering an account, matching targeted and full requests sharing work, resumed accounts, imports and OAuth completion following an active refresh, disconnected upstreams, oversized catalogs and refusals, ownership-lookup failures and cancellation, and original engine error causes. Existing cancellation, streaming, quota, persistence, and installation tests remain in the full suite.

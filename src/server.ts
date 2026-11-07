@@ -129,9 +129,7 @@ export const serve = Effect.gen(function* () {
         json(
           res,
           200,
-          yield* engine.request(
-            `get-auth-status?state=${encodeURIComponent(url.searchParams.get("state") || "")}`,
-          ),
+          yield* app.oauthStatus(url.searchParams.get("state") || ""),
         );
         return;
       }
