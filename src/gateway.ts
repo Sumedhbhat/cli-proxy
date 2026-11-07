@@ -384,6 +384,8 @@ export const makeGateway = Effect.gen(function* () {
           durationMs: Date.now() - start,
         });
       }),
+    ).pipe(
+      Effect.tapError(() => app.log("error", "Upstream connection failed")),
     );
   const proxy = (
     req: http.IncomingMessage,

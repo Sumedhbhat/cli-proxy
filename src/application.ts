@@ -45,7 +45,10 @@ export const makeApplication = Effect.gen(function* () {
   };
   const state = yield* Ref.make(initial);
   const mutations = yield* Semaphore.make(1);
-  const generation = yield* Ref.make(0);
+  const completedRefresh = yield* Ref.make<{
+    generation: number;
+    accountID?: string;
+  }>({ generation: 0 });
   const update = (f: (s: DashboardState) => DashboardState) =>
     Ref.update(state, f);
   const snapshot = Ref.get(state).pipe(
@@ -176,11 +179,16 @@ export const makeApplication = Effect.gen(function* () {
   const refresh = Effect.fn("Application.refresh")(function* (
     accountID?: string,
   ) {
-    // Requests arriving in one refresh generation share its result, including failures.
-    const observed = yield* Ref.get(generation);
+    const observed = (yield* Ref.get(completedRefresh)).generation;
     yield* mutations.withPermit(
       Effect.gen(function* () {
-        if ((yield* Ref.get(generation)) !== observed) return;
+        const completed = yield* Ref.get(completedRefresh);
+        // A full refresh covers every account; a targeted refresh only covers itself.
+        if (
+          completed.generation !== observed &&
+          (!completed.accountID || completed.accountID === accountID)
+        )
+          return;
         yield* update((s) => ({ ...s, refreshing: true }));
         yield* refreshOnce(accountID).pipe(
           Effect.catch((error) =>
@@ -198,7 +206,10 @@ export const makeApplication = Effect.gen(function* () {
           Effect.ensuring(update((s) => ({ ...s, refreshing: false }))),
         );
         // Interruption has no result to share. A queued caller must do the refresh.
-        yield* Ref.update(generation, (n) => n + 1);
+        yield* Ref.update(completedRefresh, (previous) => ({
+          generation: previous.generation + 1,
+          accountID,
+        }));
       }),
     );
   });

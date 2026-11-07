@@ -81,6 +81,8 @@ export function json(res: ServerResponse, status: number, body: unknown) {
 export const readBounded = (
   stream: AsyncIterable<Uint8Array>,
   max = 2 * 1024 * 1024,
+  tooLarge: () => InputError | TransportError = () =>
+    new TransportError({ message: "Upstream response too large" }),
 ) =>
   Effect.tryPromise({
     try: async () => {
@@ -88,19 +90,22 @@ export const readBounded = (
       let size = 0;
       for await (const chunk of stream) {
         size += chunk.length;
-        if (size > max)
-          throw new InputError({ status: 413, message: "Request too large" });
+        if (size > max) throw tooLarge();
         chunks.push(chunk);
       }
       return Buffer.concat(chunks);
     },
     catch: (cause) =>
-      cause instanceof InputError
+      cause instanceof InputError || cause instanceof TransportError
         ? cause
         : new TransportError({ message: "Stream interrupted", cause }),
   });
 export const body = (req: IncomingMessage) =>
-  readBounded(req.iterator({ destroyOnReturn: false })).pipe(
+  readBounded(
+    req.iterator({ destroyOnReturn: false }),
+    2 * 1024 * 1024,
+    () => new InputError({ status: 413, message: "Request too large" }),
+  ).pipe(
     Effect.flatMap((bytes) =>
       Schema.decodeUnknownEffect(Schema.fromJsonString(JsonObject))(
         bytes.toString() || "{}",

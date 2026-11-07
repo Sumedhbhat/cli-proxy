@@ -355,3 +355,57 @@ test(
     );
   },
 );
+
+for (const scenario of [
+  "disconnect",
+  "oversized catalog",
+  "oversized refusal",
+]) {
+  test(
+    `upstream ${scenario} reports 502 and a safe activity event`,
+    { timeout: 10000 },
+    async (t) => {
+      const { base } = await startGateway(t, (req, res) => {
+        if (defaults(req, res)) return;
+        if (scenario === "disconnect") {
+          res.destroy();
+          return;
+        }
+        res.writeHead(scenario === "oversized refusal" ? 429 : 200, {
+          "Content-Type": "application/json",
+        });
+        const padding = "x".repeat(2 * 1024 * 1024);
+        res.end(
+          JSON.stringify(
+            scenario === "oversized catalog"
+              ? { data: [{ id: "gpt-test", metadata: padding }] }
+              : { error: { message: padding } },
+          ),
+        );
+      });
+      const path =
+        scenario === "oversized catalog" ? "/codex/v1/models" : "/v1/responses";
+      const response = await fetch(base + path + "?private=hidden-query", {
+        method: scenario === "oversized catalog" ? "GET" : "POST",
+        headers: { Authorization: "Bearer proxy-test" },
+        ...(scenario !== "oversized catalog"
+          ? { body: '{"model":"gpt-test","input":"private-inference-body"}' }
+          : {}),
+      });
+      assert.equal(response.status, 502);
+      const state = await (await fetch(base + "/api/state")).json();
+      assert.ok(
+        state.events.some(
+          (event) =>
+            event.type === "error" &&
+            event.message === "Upstream connection failed",
+        ),
+      );
+      assert.doesNotMatch(
+        JSON.stringify(state.events),
+        /hidden-query|private-inference-body|proxy-test|management-test/,
+      );
+      assert.equal((await fetch(base + "/healthz")).status, 200);
+    },
+  );
+}
