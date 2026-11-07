@@ -6,9 +6,10 @@ New sessions prefer usable accounts with the nearest weekly renewal or unused re
 
 ## Try the interface
 
-Requires Node.js 24 or newer. There are no npm packages to install.
+Requires Node.js 24 or newer. Install the pinned dependencies first; npm also builds the browser bundle and client launchers.
 
 ```sh
+npm ci
 npm run demo
 ```
 
@@ -16,7 +17,7 @@ Open http://127.0.0.1:8318. Demo mode uses sample accounts and rejects inference
 
 ## Run with your accounts
 
-Automatic engine installation supports Linux and macOS on x64 and arm64, with `tar` available.
+Automatic engine installation supports Linux and macOS on x64 and arm64, with `tar` available. Run `npm ci` in the checkout before using the setup commands.
 
 ```sh
 npm run setup
@@ -160,7 +161,7 @@ For a console started with `npm start`, run `npm run restore-priorities` in that
 npm run check
 ```
 
-Tests cover provider quota normalization, reset order, exhausted and stale quotas, account priority updates, dashboard access without login, cross-origin writes, API-key enforcement, streaming, WebSocket upgrades, and management-route isolation. The integration test uses a local fake engine and makes no model calls.
+Strict TypeScript, formatting, and the migration contract run before the tests. Tests cover provider quota normalization, reset order, exhausted and stale quotas, account priority updates, dashboard access without login, cross-origin writes, API-key enforcement, streaming, WebSocket upgrades, and management-route isolation. Integration tests use local fake engines and make no model calls. Command tests use temporary installations and fake service managers; they do not change the running deployment.
 
 The installed engine was started and its management API was checked. Browser checks cover desktop and mobile layouts, filtering, search, email masking, and routing controls. **Real account OAuth, provider quota responses, and model inference still require your account sign-in and have not been exercised with real credentials.**
 
@@ -178,7 +179,7 @@ On Linux, stop any manually started engine and console, then run:
 npm run service:install
 ```
 
-This copies the app to `~/.local/share/cli-proxy/`, enables two systemd user services, and enables user lingering. The services start at boot without a desktop sign-in and restart after a failure. The installation survives closing T3 or removing this worktree. Tailscale Serve keeps the HTTPS listener configured across restarts.
+Run this from a checkout with development dependencies installed. It builds the browser bundle and launchers, copies the app and lockfile to `~/.local/share/cli-proxy/`, installs runtime dependencies with `npm ci --omit=dev --ignore-scripts`, enables two systemd user services, and enables user lingering. The services start at boot without a desktop sign-in and restart after a failure. The installation survives closing T3 or removing this worktree. Tailscale Serve keeps the HTTPS listener configured across restarts.
 
 On this host, NetworkManager and Tailscale are enabled at boot. Both saved Wi-Fi connections reconnect automatically with system-stored credentials, so networking does not wait for a desktop sign-in. After power is restored and the computer boots, the console becomes reachable once the network is back.
 
@@ -188,3 +189,13 @@ The deployed `.env`, credentials, and scheduler state live under `~/.local/share
 systemctl --user status cli-proxy-engine cli-proxy-console
 journalctl --user -u cli-proxy-console -n 50
 ```
+
+## Effect implementation
+
+Application sources are TypeScript executed by Node 24. Effect 4.0.6 manages I/O, failures, cancellation, and resource lifetimes. The Effect platform packages are pinned to the same release. All direct dependencies clear the 14-day release cooldown.
+
+`Application` owns the quota snapshot and scheduler. `Engine`, `Storage`, and `AppConfig` are injectable services assembled with Layers. Quota normalization, account ranking, model filtering, and reset selection stay pure. HTTP streaming and WebSockets use Node's transport inside Effect scopes to retain backpressure and session headers.
+
+Run `npm run build` after editing the dashboard. It generates the browser bundle, the stable `scripts/claude-client.js` launcher, and a standalone Effect credential helper. Generated JavaScript is ignored by Git. The helper contains the path to `.env`, never its contents, and works without the checkout or npm dependencies after installation.
+
+The runtime and verification details are in [the migration notes](docs/effect-migration.md).
