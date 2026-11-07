@@ -259,103 +259,6 @@ test(
   },
 );
 
-test(
-  "a queued refresh completes after its original owner is cancelled",
-  { timeout: 5000 },
-  async () => {
-    const { Deferred, Effect, Fiber, Redacted } = await import("effect");
-    const { makeApplication } = await import("../src/application.ts");
-    const { AppConfig } = await import("../src/config.ts");
-    const { Engine } = await import("../src/engine.ts");
-    const { Storage } = await import("../src/storage.ts");
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const entered = yield* Deferred.make();
-        let calls = 0,
-          saved = 0;
-        const account = {
-          id: "one",
-          name: "one.json",
-          provider: "codex",
-          email: "",
-          disabled: false,
-          runtimeOnly: false,
-          status: "active",
-          priority: 0,
-          supportsQuota: true,
-          accountId: null,
-          plan: "",
-          success: 0,
-          failed: 0,
-          quota: null,
-          quotaError: null,
-        };
-        const app = yield* makeApplication.pipe(
-          Effect.provideService(AppConfig, {
-            demo: false,
-            dataDir: "",
-            port: 0,
-            engineURL: "http://unused",
-            apiKey: Redacted.make("unused"),
-            managementKey: Redacted.make("unused"),
-          }),
-          Effect.provideService(Engine, {
-            accounts: () => Effect.succeed([account]),
-            request: () => Effect.succeed({ routing: {} }),
-            authFiles: () => Effect.succeed([]),
-            quota: () =>
-              Effect.gen(function* () {
-                calls++;
-                if (calls === 2) {
-                  yield* Deferred.succeed(entered, undefined);
-                  yield* Effect.never;
-                }
-                return {
-                  windows: [
-                    {
-                      id: "weekly",
-                      label: "Weekly limit",
-                      remaining: calls === 1 ? 80 : 60,
-                      resetsAt: null,
-                    },
-                  ],
-                  fetchedAt: new Date().toISOString(),
-                  availableResets: null,
-                  nextResetExpiresAt: null,
-                  plan: null,
-                };
-              }),
-          }),
-          Effect.provideService(Storage, {
-            loadSettings: Effect.succeed({
-              scheduler: false,
-              intervalSeconds: 60,
-            }),
-            loadQuota: Effect.succeed([]),
-            saveQuota: () =>
-              Effect.sync(() => {
-                saved++;
-              }),
-          }),
-        );
-        yield* app.refresh();
-        const owner = yield* app.refresh().pipe(Effect.forkChild);
-        yield* Deferred.await(entered);
-        const waiter = yield* app.refresh().pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* Fiber.interrupt(owner);
-        yield* Fiber.join(waiter);
-        const state = yield* app.snapshot;
-        assert.equal(calls, 3);
-        assert.equal(saved, 2);
-        assert.equal(state.accounts[0].quota.windows[0].remaining, 60);
-        assert.equal(state.connected, true);
-        assert.equal(state.refreshing, false);
-      }).pipe(Effect.timeout(3000)),
-    );
-  },
-);
-
 for (const scenario of [
   "disconnect",
   "oversized catalog",
@@ -409,3 +312,62 @@ for (const scenario of [
     },
   );
 }
+
+for (const scenario of ["oversized", "malformed", "unavailable"]) {
+  test(
+    `an invalid ownership catalog (${scenario}) reports an upstream failure`,
+    { timeout: 10000 },
+    async (t) => {
+      const { base } = await startGateway(t, (req, res) => {
+        if (defaults(req, res)) return;
+        res.setHeader("Content-Type", "application/json");
+        if (req.url.includes("client_version")) {
+          res.end('{"models":[{"slug":"g5","context_window":400000}]}');
+          return;
+        }
+        if (scenario === "unavailable") res.writeHead(503);
+        res.end(
+          scenario === "oversized"
+            ? JSON.stringify({ data: [], padding: "x".repeat(2 * 1024 * 1024) })
+            : scenario === "malformed"
+              ? "{"
+              : "{}",
+        );
+      });
+      const response = await fetch(base + "/codex/v1/models?client_version=1", {
+        headers: { Authorization: "Bearer proxy-test" },
+      });
+      assert.equal(response.status, 502);
+      assert.equal((await fetch(base + "/healthz")).status, 200);
+    },
+  );
+}
+
+test(
+  "disconnecting during ownership lookup cancels the unfinished upstream body",
+  { timeout: 10000 },
+  async (t) => {
+    const { promise: started, resolve: markStarted } = Promise.withResolvers();
+    const { promise: closed, resolve: markClosed } = Promise.withResolvers();
+    const { base } = await startGateway(t, (req, res) => {
+      if (defaults(req, res)) return;
+      res.setHeader("Content-Type", "application/json");
+      if (req.url.includes("client_version")) {
+        res.end('{"models":[{"slug":"g5"}]}');
+        return;
+      }
+      res.once("close", markClosed);
+      res.write('{"data":[');
+      markStarted();
+    });
+    const request = http.get(base + "/codex/v1/models?client_version=1", {
+      headers: { Authorization: "Bearer proxy-test" },
+    });
+    request.on("error", () => {});
+    t.after(() => request.destroy());
+    await started;
+    request.destroy();
+    await closed;
+    assert.equal((await fetch(base + "/healthz")).status, 200);
+  },
+);

@@ -63,7 +63,7 @@ export const makeStorage = Effect.fn("Storage.make")(function* (dir: string) {
     ),
     // A missing or obsolete cache may be discarded; it never establishes usable quota.
     loadQuota: read("quota-cache.json", QuotaCache).pipe(
-      Effect.catch(() => Effect.succeed([])),
+      Effect.orElseSucceed(() => []),
     ),
     readBackup,
     saveSettings: (settings: Settings) => write("settings.json", settings),
@@ -79,6 +79,7 @@ export class Storage extends Context.Service<Storage, StorageService>()(
 export const StorageLive = Layer.effect(
   Storage,
   Effect.gen(function* () {
-    return yield* makeStorage((yield* AppConfig).dataDir);
+    const config = yield* AppConfig;
+    return yield* makeStorage(config.dataDir);
   }),
 );

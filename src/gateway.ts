@@ -80,45 +80,55 @@ export const makeGateway = Effect.gen(function* () {
   const config = yield* AppConfig;
   const app = yield* Application;
   const apiKey = Redacted.value(config.apiKey);
-  const catalogOwners = Effect.tryPromise({
-    try: async (signal) => {
-      const response = await fetch(new URL("/v1/models", config.engineURL), {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "User-Agent": "cli-proxy",
-          "Accept-Encoding": "identity",
-        },
-        signal,
-        redirect: "error",
+  const catalogOwners = Effect.scoped(
+    Effect.gen(function* () {
+      const controller = yield* Effect.acquireRelease(
+        Effect.sync(() => new AbortController()),
+        (controller) => Effect.sync(() => controller.abort()),
+      );
+      const response = yield* Effect.tryPromise({
+        try: () =>
+          fetch(new URL("/v1/models", config.engineURL), {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "User-Agent": "cli-proxy",
+              "Accept-Encoding": "identity",
+            },
+            signal: controller.signal,
+            redirect: "error",
+          }),
+        catch: (cause) =>
+          new TransportError({
+            message: "Model ownership lookup failed",
+            cause,
+          }),
       });
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw new Error("Model ownership lookup failed");
-      }
-      if (!response.body) throw new Error("Missing catalog body");
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      for await (const chunk of response.body) {
-        size += chunk.length;
-        if (size > 2 * 1024 * 1024) {
-          await response.body.cancel().catch(() => {});
-          throw new Error("Model catalog too large");
-        }
-        chunks.push(chunk);
-      }
-      const payload = record(JSON.parse(Buffer.concat(chunks).toString()));
+      if (!response.ok || !response.body)
+        return yield* new TransportError({
+          message: "Model ownership lookup failed",
+        });
+      const payload = yield* readBounded(response.body).pipe(
+        Effect.flatMap(parseObject),
+        Effect.mapError(
+          (cause) =>
+            new TransportError({
+              message: "Invalid model ownership catalog",
+              cause,
+            }),
+        ),
+      );
       if (!Array.isArray(payload.data))
-        throw new Error("Invalid model ownership catalog");
+        return yield* new TransportError({
+          message: "Invalid model ownership catalog",
+        });
       return new Map(
         records(payload.data).map((model) => [
           String(model.id),
           model.owned_by,
         ]),
       );
-    },
-    catch: (cause) =>
-      new TransportError({ message: "Model ownership lookup failed", cause }),
-  }).pipe(Effect.timeout(10000));
+    }),
+  ).pipe(Effect.timeout(10000));
 
   const forward = (
     req: http.IncomingMessage,
@@ -128,8 +138,8 @@ export const makeGateway = Effect.gen(function* () {
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const path = new URL(req.url || "/", "http://localhost").pathname;
         const requestURL = new URL(req.url || "/", "http://localhost");
+        const path = requestURL.pathname;
         // Absolute-form and network-path request targets cannot change the upstream origin.
         const target = new URL(
           requestURL.pathname + requestURL.search,
@@ -320,7 +330,7 @@ export const makeGateway = Effect.gen(function* () {
           if (family === "codex" || reset) {
             const bytes = yield* readBounded(response);
             const payload = yield* parseObject(bytes).pipe(
-              Effect.catch(() => Effect.succeed(null)),
+              Effect.orElseSucceed(() => null),
             );
             const error = record(payload?.error);
             const editable =

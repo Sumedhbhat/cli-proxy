@@ -14,7 +14,7 @@
     "clients:configure": "node scripts/configure-clients.ts",
     "restore-priorities": "node scripts/restore-priorities.ts",
     "export-demo": "node scripts/export-demo.ts",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js test/*.test.ts",
     "check": "npm run typecheck && npm run format:check && npm run migration:check && npm test",
     "build": "node scripts/build.ts",
     "prestart": "node scripts/ensure-built.ts",
