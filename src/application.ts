@@ -47,8 +47,8 @@ export const makeApplication = Effect.gen(function* () {
   const mutations = yield* Semaphore.make(1);
   const completedRefresh = yield* Ref.make<{
     generation: number;
-    accountID?: string;
-  }>({ generation: 0 });
+    scope: { readonly accountID?: string } | null;
+  }>({ generation: 0, scope: null });
   const update = (f: (s: DashboardState) => DashboardState) =>
     Ref.update(state, f);
   const snapshot = Ref.get(state).pipe(
@@ -186,7 +186,9 @@ export const makeApplication = Effect.gen(function* () {
         // A full refresh covers every account; a targeted refresh only covers itself.
         if (
           completed.generation !== observed &&
-          (!completed.accountID || completed.accountID === accountID)
+          completed.scope &&
+          (!completed.scope.accountID ||
+            completed.scope.accountID === accountID)
         )
           return;
         yield* update((s) => ({ ...s, refreshing: true }));
@@ -208,7 +210,7 @@ export const makeApplication = Effect.gen(function* () {
         // Interruption has no result to share. A queued caller must do the refresh.
         yield* Ref.update(completedRefresh, (previous) => ({
           generation: previous.generation + 1,
-          accountID,
+          scope: { accountID },
         }));
       }),
     );
@@ -243,6 +245,12 @@ export const makeApplication = Effect.gen(function* () {
             status: 400,
             message: "Valid account id and disabled boolean required",
           });
+        // A resumed account may have been skipped by an older full refresh.
+        // Invalidate before the mutation: interruption can leave its outcome unknown.
+        yield* Ref.update(completedRefresh, ({ generation }) => ({
+          generation,
+          scope: null,
+        }));
         if (!config.demo) yield* engine.status(account, disabled);
         yield* update((s) => ({
           ...s,

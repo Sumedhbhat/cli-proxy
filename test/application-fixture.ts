@@ -31,6 +31,7 @@ const unexpected = (operation: string) =>
 export const applicationLayer = (options: {
   readonly accounts: ReadonlyArray<Account>;
   readonly quota: EngineService["quota"];
+  readonly status?: EngineService["status"];
   readonly saveQuota?: StorageService["saveQuota"];
 }) =>
   Layer.mergeAll(
@@ -53,7 +54,7 @@ export const applicationLayer = (options: {
         authFiles: () => Effect.succeed([]),
         quota: options.quota,
         patch: () => unexpected("Engine.patch"),
-        status: () => unexpected("Engine.status"),
+        status: options.status ?? (() => unexpected("Engine.status")),
       }),
     ),
     Layer.succeed(

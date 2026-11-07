@@ -4,6 +4,93 @@ import { Deferred, Effect, Fiber } from "effect";
 import { makeApplication } from "../src/application.ts";
 import { account, applicationLayer } from "./application-fixture.ts";
 
+for (const interrupted of [false, true]) {
+  test(
+    `a resumed account cannot reuse a full refresh that skipped it (${interrupted ? "interrupted" : "completed"} mutation)`,
+    { timeout: 5000 },
+    async () => {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const mutationEntered = yield* Deferred.make<void>();
+          const accounts = [{ ...account("A"), disabled: true }, account("B")];
+          const calls: string[] = [];
+          let requested = false;
+          const app = yield* makeApplication.pipe(
+            Effect.provide(
+              applicationLayer({
+                accounts,
+                status: (target, disabled) =>
+                  Effect.gen(function* () {
+                    const index = accounts.findIndex(
+                      (a) => a.name === target.name,
+                    );
+                    const current = accounts[index];
+                    assert.ok(current);
+                    accounts[index] = { ...current, disabled };
+                    if (interrupted) {
+                      yield* Deferred.succeed(mutationEntered, undefined);
+                      yield* Effect.never;
+                    }
+                  }),
+                quota: (account) =>
+                  Effect.gen(function* () {
+                    if (requested) {
+                      calls.push(account.id);
+                      if (account.id === "B") {
+                        yield* Deferred.succeed(entered, undefined);
+                        yield* Deferred.await(release);
+                      }
+                    }
+                    return {
+                      windows: [
+                        {
+                          id: "weekly",
+                          label: "Weekly limit",
+                          remaining: 75,
+                          resetsAt: null,
+                        },
+                      ],
+                      fetchedAt: new Date().toISOString(),
+                      availableResets: null,
+                      nextResetExpiresAt: null,
+                      plan: null,
+                    };
+                  }),
+              }),
+            ),
+          );
+          yield* app.refresh();
+          requested = true;
+          const full = yield* app.refresh().pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          const resume = yield* app
+            .setDisabled("A", false)
+            .pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          const targeted = yield* app.refresh("A").pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(full);
+          if (interrupted) {
+            yield* Deferred.await(mutationEntered);
+            yield* Fiber.interrupt(resume);
+          } else {
+            yield* Fiber.join(resume);
+          }
+          yield* Fiber.join(targeted);
+          const state = yield* app.snapshot;
+          const resumed = state.accounts.find((a) => a.id === "A");
+          assert.equal(resumed?.disabled, false);
+          assert.equal(resumed?.quota?.windows[0]?.remaining, 75);
+          assert.deepEqual(calls, ["B", "A"]);
+        }).pipe(Effect.timeout(3000)),
+      );
+    },
+  );
+}
+
 for (const { label, ownerScope, waiterScope, expectedCalls, expectedB } of [
   {
     label: "different accounts run their own refresh",
