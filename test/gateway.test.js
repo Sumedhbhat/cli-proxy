@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 
 test('tailnet dashboard opens without login while inference stays authenticated', {timeout:20000}, async t => {
   const patches=[], seen=[], sockets=new Set();
+  let usableQuota = false;
   const engine=http.createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;
     const body=raw?JSON.parse(raw):{}; const path=new URL(req.url,'http://local').pathname;
@@ -17,7 +18,10 @@ test('tailnet dashboard opens without login while inference stays authenticated'
     if(req.headers.authorization!=='Bearer test-management'&&path.startsWith('/v0/management/')){res.writeHead(401);res.end('{}');return;}
     if(path.endsWith('/auth-files'))res.end(JSON.stringify({files:[{name:'later.json',auth_index:'later',provider:'claude',supports_quota:true},{name:'soon.json',auth_index:'soon',provider:'claude',supports_quota:true}]}));
     else if(path.endsWith('/config'))res.end(JSON.stringify({routing:{strategy:'fill-first','session-affinity':true}}));
-    else if(path.endsWith('/quota/fetch'))res.end(JSON.stringify({seven_day:{utilization:100,resets_at:new Date(Date.now()+(body.auth_index==='soon'?1:4)*86400000).toISOString()}}));
+    else if(path.endsWith('/quota/fetch'))res.end(JSON.stringify({
+      seven_day:{utilization:usableQuota?50:100,resets_at:new Date(Date.now()+(body.auth_index==='soon'?1:4)*86400000).toISOString()},
+      cedar_ember:{eligible:true,grants:[{resets_left:2,ends_at:new Date(Date.now()+(body.auth_index==='soon'?5:.5)*86400000).toISOString()}]},
+    }));
     else if(path.endsWith('/auth-files/fields')){patches.push(body);res.end('{"status":"ok"}');}
     else if(path.endsWith('/anthropic-auth-url'))res.end('{"url":"https://claude.ai/oauth/authorize","state":"test-state"}');
     else if(path==='/v1/models'){
@@ -86,6 +90,13 @@ test('tailnet dashboard opens without login while inference stays authenticated'
   assert.equal(Number(limited.headers.get('anthropic-ratelimit-unified-reset')), Math.ceil(Date.parse(limitedBody.error.resets_at)/1000));
   const unknown=await fetch(base+'/v1/messages',{method:'POST',headers:{Authorization:'Bearer test-api'},body:JSON.stringify({model:'unknown'})});
   assert.equal((await unknown.json()).error.message,'All credentials cooling down');
+  usableQuota = true;
+  assert.equal((await fetch(base+'/api/refresh',{method:'POST',headers:auth,body:'{}'})).status,200);
+  const usableState = await (await fetch(base+'/api/state')).json();
+  assert.equal(usableState.schedulerError, null);
+  assert.deepEqual(usableState.ranks.map(r => r.id), ['later', 'soon']);
+  assert.deepEqual(usableState.accounts.map(a => [a.id, a.priority]), [['later', 10000], ['soon', 9999]]);
+  assert.deepEqual(patches.slice(-2), [{name:'later.json',priority:10000},{name:'soon.json',priority:9999}]);
   const oauth=await fetch(base+'/api/oauth/start',{method:'POST',headers:auth,body:JSON.stringify({provider:'claude'})});
   assert.equal(oauth.status,200);assert.equal((await oauth.json()).state,'test-state');
   const stream=await fetch(base+'/codex/v1/responses',{method:'POST',headers:{Authorization:'Bearer test-api',Cookie:'private=do-not-forward','Content-Type':'application/json','session_id':'sticky-123'},body:JSON.stringify({model:'test',stream:true})});

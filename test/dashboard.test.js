@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { normalizeQuota } from '../src/quota.js';
+import { normalizeQuota, rankAccounts } from '../src/quota.js';
 
 test('quota and account views show reset balances, nearest expiries, unknown values, and snapshot freshness', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-07T00:00:00Z') });
@@ -15,6 +15,15 @@ test('quota and account views show reset balances, nearest expiries, unknown val
     id, name: `${id}.json`, provider, quota: {
       availableResets, fetchedAt: new Date().toISOString(), windows: [],
     }, ...extra,
+  });
+  const rankedAccount = (id, weeklyDays, expiryDays, shortRemaining = 100) => account(id, 'codex', 2, {
+    quota: {
+      availableResets: 2, fetchedAt: new Date().toISOString(), nextResetExpiresAt: new Date(Date.now() + expiryDays * 86400000).toISOString(),
+      windows: [
+        { id: 'weekly', label: 'Weekly limit', remaining: 50, resetsAt: new Date(Date.now() + weeklyDays * 86400000).toISOString() },
+        { id: 'five_hour', label: '5-hour limit', remaining: shortRemaining, resetsAt: new Date(Date.now() + 3600000).toISOString() },
+      ],
+    },
   });
   const state = {
     accounts: [
@@ -29,8 +38,11 @@ test('quota and account views show reset balances, nearest expiries, unknown val
       account('elapsed-expiry', 'codex', 2, { quota: { ...expiryQuota, nextResetExpiresAt: new Date(Date.now() - 1000).toISOString() } }),
       account('invalid-expiry', 'codex', 2, { quota: { ...expiryQuota, nextResetExpiresAt: 'invalid' } }),
       account('zero-expiry', 'codex', 0, { quota: { ...expiryQuota, availableResets: 0 } }),
+      rankedAccount('a-later', 3, 5), rankedAccount('m-credit-tomorrow', 4, 1),
+      rankedAccount('z-weekly-today', .5, 2), rankedAccount('blocked', .1, .1, 0),
     ], ranks: [], settings: {}, routing: {}, events: [], connected: true,
   };
+  state.ranks = rankAccounts(state.accounts);
   const elements = new Map();
   const element = selector => {
     if (!elements.has(selector)) elements.set(selector, {
@@ -73,14 +85,32 @@ test('quota and account views show reset balances, nearest expiries, unknown val
     assert.doesNotMatch(main.innerHTML, /Invalid Date/);
     assert.doesNotMatch(main.innerHTML, /-1 resets available/);
   };
+  const assertRoutingOrder = () => {
+    const ids = [...main.innerHTML.matchAll(/data-id="([^"]+)"/g)].map(([, id]) => id)
+      .filter(id => ['a-later', 'm-credit-tomorrow', 'z-weekly-today', 'blocked'].includes(id));
+    assert.deepEqual(ids, ['z-weekly-today', 'm-credit-tomorrow', 'a-later', 'blocked']);
+    assert.match(rowFor('z-weekly-today'), /Next for new sessions/);
+    assert.doesNotMatch(rowFor('blocked'), /Next for new sessions/);
+    assert.match(rowFor('m-credit-tomorrow'), /Next reset expires in 1 day/);
+  };
   assertBalances();
+  assertRoutingOrder();
   await main.handlers.change({ target: { id: 'layout', value: 'cards' } });
   assert.match(main.innerHTML, /class="card-view"/);
   assertBalances();
+  assertRoutingOrder();
   location.hash = '#accounts';
   handlers.hashchange();
   assertBalances();
+  assertRoutingOrder();
   await main.handlers.change({ target: { id: 'layout', value: 'ledger' } });
   assert.match(main.innerHTML, /class="ledger-head"/);
+  assertBalances();
+  assertRoutingOrder();
+  await main.handlers.change({ target: { id: 'sort', value: 'name' } });
+  const names = [...main.innerHTML.matchAll(/data-id="([^"]+)"/g)].map(([, id]) => id)
+    .filter(id => ['a-later', 'm-credit-tomorrow', 'z-weekly-today', 'blocked'].includes(id));
+  assert.deepEqual(names, ['a-later', 'blocked', 'm-credit-tomorrow', 'z-weekly-today']);
+  assert.match(rowFor('z-weekly-today'), /Next for new sessions/);
   assertBalances();
 });

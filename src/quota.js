@@ -80,9 +80,19 @@ export function rankAccounts(accounts, now = Date.now(), staleMs = 180000) {
       // Never invent replenishment from a local timer. A fresh provider poll must confirm it.
       const future = w?.resetsAt && Date.parse(w.resetsAt) > now;
       const exhausted = fresh && a.quota.windows.some(x => x.remaining <= 0);
-      return { account: a, exhausted, usable: fresh && future && !exhausted, reset: future ? Date.parse(w.resetsAt) : Infinity };
-    }).sort((a, b) => Number(b.usable) - Number(a.usable) || Number(a.exhausted) - Number(b.exhausted) || a.reset - b.reset || a.account.id.localeCompare(b.account.id));
-    scored.forEach((s, i) => result.push({ id: s.account.id, name: s.account.name, priority: s.exhausted ? -1000000 : s.usable ? 10000 - i : 0, reason: s.exhausted ? 'Quota exhausted; engine cooldown applies' : s.usable ? 'Earliest weekly reset first' : 'Quota unknown or stale; normal fallback' }));
+      const reset = future ? Date.parse(w.resetsAt) : Infinity;
+      const expiresAt = resetCount(a.quota?.availableResets) > 0 ? Date.parse(a.quota.nextResetExpiresAt) : NaN;
+      const expiry = expiresAt > now ? expiresAt : Infinity;
+      // Short windows affect availability, but only weekly renewal and unused
+      // reset expiry determine which account's usable quota to consume first.
+      return { account: a, exhausted, usable: fresh && future && !exhausted, reset, expiry, deadline: Math.min(reset, expiry) };
+    }).sort((a, b) => Number(b.usable) - Number(a.usable) || Number(a.exhausted) - Number(b.exhausted) || a.deadline - b.deadline || a.reset - b.reset || a.expiry - b.expiry || a.account.id.localeCompare(b.account.id));
+    scored.forEach((s, i) => {
+      const reason = s.exhausted ? 'Quota exhausted; engine cooldown applies'
+        : !s.usable ? 'Quota unknown or stale; normal fallback'
+        : s.expiry < s.reset ? 'Unused reset expires before weekly renewal' : 'Earliest weekly reset first';
+      result.push({ id: s.account.id, name: s.account.name, priority: s.exhausted ? -1000000 : s.usable ? 10000 - i : 0, reason });
+    });
   }
   return result;
 }

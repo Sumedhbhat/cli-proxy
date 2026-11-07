@@ -2,7 +2,7 @@
 
 A local console and gateway for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), inspired by the quota dashboard in [Theo's video](https://www.youtube.com/watch?v=D8PikZ1KhUo).
 
-New sessions prefer the account whose weekly quota resets soonest. Existing sessions stay with their account through CLIProxyAPI's session affinity. The console shows remaining quota, provider reset times, available account resets, account status, and the proposed routing order.
+New sessions prefer usable accounts with the nearest weekly renewal or unused reset expiry, whichever comes first. Existing sessions stay with their account through CLIProxyAPI's session affinity. The console shows remaining quota, provider reset times, available account resets and their nearest expiry, account status, and the proposed routing order.
 
 ## Try the interface
 
@@ -137,7 +137,9 @@ Below each positive balance, **Next reset expires** shows the earliest reported 
 
 The optional Codex detail lookup times out after two seconds. Failed lookups and responses without a credits array back off for five minutes per account, while quota polling continues normally.
 
-For each provider, healthy accounts with fresh quota receive descending priorities according to their next weekly reset. Claude's Fable weekly bucket is preferred when present; otherwise the first weekly bucket is used. Unknown or stale quotas get priority zero. Accounts with any exhausted reported window get a low priority, while CLIProxyAPI still enforces provider cooldowns and handles failover. Disabled and runtime-only accounts are untouched.
+For each provider, healthy accounts with fresh quota receive descending priorities by the earlier of their weekly renewal and nearest unused reset expiry. For example, an account renewing today with a credit expiring tomorrow comes before one renewing in three days with a credit expiring in five. A credit expiring today can also move an account ahead of one renewing tomorrow. Ties prefer the nearer weekly renewal, then the nearer credit expiry, then account ID. The default order on the Quota management and Accounts pages follows this same ranking.
+
+Claude's Fable weekly bucket is preferred when present; otherwise the first weekly bucket is used. Five-hour reset times do not affect the deadline, but any exhausted reported window lowers the account's priority, even when unused resets remain. Reset credits affect routing while quota is usable; the scheduler does not redeem them. Missing, invalid, or expired credit details leave weekly ordering intact. Unknown or stale quotas get priority zero. CLIProxyAPI still enforces provider cooldowns and handles failover. Disabled and runtime-only accounts are untouched.
 
 Priority is **per credential**, not per model. A model-specific quota window can therefore lower the priority of the whole credential. This is conservative and may leave usable quota on another model. The console does not claim that a quota timer replenished an account: only a fresh provider response updates its remaining quota. Snapshots become stale after three minutes.
 
