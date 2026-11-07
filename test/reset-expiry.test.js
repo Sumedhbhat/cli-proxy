@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { once } from "node:events";
-import { createEngine } from "./effect-helpers.js";
+import { createEngine } from "./effect-helpers.ts";
 
 test("Codex fetches expiry details through the engine for direct and plugin quotas without losing quota on failure", async (t) => {
   const soon = new Date(Date.now() + 86400000).toISOString();

@@ -19,7 +19,7 @@ export const followUpdates = Effect.fn("Claude.followUpdates")(function* (
   const fs = yield* FileSystem.FileSystem;
   const names = yield* fs
     .readDirectory(dir)
-    .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+    .pipe(Effect.orElseSucceed(() => []));
   const candidates = names
     .filter((name) => semver.test(name) && compareVersions(name, current) > 0)
     .sort(compareVersions)
@@ -29,7 +29,7 @@ export const followUpdates = Effect.fn("Claude.followUpdates")(function* (
     const executable = yield* Effect.gen(function* () {
       yield* Effect.tryPromise(() => access(path, 1));
       return (yield* fs.stat(path)).type === "File";
-    }).pipe(Effect.catch(() => Effect.succeed(false)));
+    }).pipe(Effect.orElseSucceed(() => false));
     if (executable) return path;
   }
   return binary;

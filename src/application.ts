@@ -6,7 +6,7 @@ import { demoAccounts } from "./demo.ts";
 import { rankAccounts } from "./quota.ts";
 import { codexUsageLimit } from "./codex-limit.ts";
 import { InputError, message, record } from "./domain.ts";
-import type { Account, DashboardState, Event } from "./domain.ts";
+import type { Account, DashboardState, Event, JsonObject } from "./domain.ts";
 
 export const makeApplication = Effect.gen(function* () {
   const config = yield* AppConfig;
@@ -45,7 +45,14 @@ export const makeApplication = Effect.gen(function* () {
   };
   const state = yield* Ref.make(initial);
   const mutations = yield* Semaphore.make(1);
-  const generation = yield* Ref.make(0);
+  const completedRefresh = yield* Ref.make<{
+    generation: number;
+    scope: { readonly accountID?: string } | null;
+  }>({ generation: 0, scope: null });
+  const invalidateRefreshCoverage = Ref.update(
+    completedRefresh,
+    ({ generation }) => ({ generation, scope: null }),
+  );
   const update = (f: (s: DashboardState) => DashboardState) =>
     Ref.update(state, f);
   const snapshot = Ref.get(state).pipe(
@@ -176,11 +183,18 @@ export const makeApplication = Effect.gen(function* () {
   const refresh = Effect.fn("Application.refresh")(function* (
     accountID?: string,
   ) {
-    // Requests arriving in one refresh generation share its result, including failures.
-    const observed = yield* Ref.get(generation);
+    const observed = (yield* Ref.get(completedRefresh)).generation;
     yield* mutations.withPermit(
       Effect.gen(function* () {
-        if ((yield* Ref.get(generation)) !== observed) return;
+        const completed = yield* Ref.get(completedRefresh);
+        // A full refresh covers every account; a targeted refresh only covers itself.
+        if (
+          completed.generation !== observed &&
+          completed.scope &&
+          (!completed.scope.accountID ||
+            completed.scope.accountID === accountID)
+        )
+          return;
         yield* update((s) => ({ ...s, refreshing: true }));
         yield* refreshOnce(accountID).pipe(
           Effect.catch((error) =>
@@ -198,7 +212,10 @@ export const makeApplication = Effect.gen(function* () {
           Effect.ensuring(update((s) => ({ ...s, refreshing: false }))),
         );
         // Interruption has no result to share. A queued caller must do the refresh.
-        yield* Ref.update(generation, (n) => n + 1);
+        yield* Ref.update(completedRefresh, (previous) => ({
+          generation: previous.generation + 1,
+          scope: { accountID },
+        }));
       }),
     );
   });
@@ -232,6 +249,9 @@ export const makeApplication = Effect.gen(function* () {
             status: 400,
             message: "Valid account id and disabled boolean required",
           });
+        // A resumed account may have been skipped by an older full refresh.
+        // Invalidate before the mutation: interruption can leave its outcome unknown.
+        yield* invalidateRefreshCoverage;
         if (!config.demo) yield* engine.status(account, disabled);
         yield* update((s) => ({
           ...s,
@@ -245,6 +265,33 @@ export const makeApplication = Effect.gen(function* () {
         );
       }),
     );
+  const importAccount = Effect.fn("Application.importAccount")(function* (
+    name: string,
+    credential: JsonObject,
+  ) {
+    yield* mutations.withPermit(
+      Effect.gen(function* () {
+        yield* invalidateRefreshCoverage;
+        yield* engine.request(`auth-files?name=${encodeURIComponent(name)}`, {
+          method: "POST",
+          body: credential,
+        });
+      }),
+    );
+    yield* refresh();
+  });
+  const oauthStatus = Effect.fn("Application.oauthStatus")(function* (
+    state: string,
+  ) {
+    const status = yield* engine.request(
+      `get-auth-status?state=${encodeURIComponent(state)}`,
+    );
+    if (record(status).status === "ok") {
+      // Wait for any older refresh to finish before invalidating its account list.
+      yield* mutations.withPermit(invalidateRefreshCoverage);
+    }
+    return status;
+  });
   const [files, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     engine.authFiles(3000),
     5000,
@@ -262,7 +309,16 @@ export const makeApplication = Effect.gen(function* () {
         }),
       ),
     );
-  return { snapshot, log, refresh, setScheduler, setDisabled, codexLimit };
+  return {
+    snapshot,
+    log,
+    refresh,
+    setScheduler,
+    setDisabled,
+    importAccount,
+    oauthStatus,
+    codexLimit,
+  };
 });
 export type ApplicationService = Effect.Success<typeof makeApplication>;
 export class Application extends Context.Service<

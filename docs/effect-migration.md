@@ -7,7 +7,7 @@ The application now uses TypeScript and Effect 4.0.6. Node 24 strips the types a
 - `AppConfig` parses environment configuration once and stores service keys as `Redacted` values.
 - `Engine` owns authenticated management calls, provider usage probes, optional reset-detail backoff, and the Claude version cache. Fetch receives Effect's cancellation signal; its timeout includes reading the response body.
 - `Storage` reads validated settings, quota snapshots, and priority backups through Effect's filesystem service. Settings and snapshots use private temporary files and a rename in the same directory. A corrupt priority backup fails the update rather than replacing the rollback record.
-- `Application` owns immutable snapshots in a `Ref`. A semaphore serializes refreshes and dashboard mutations. Refresh requests arriving in the same generation share the result; provider calls have concurrency three. The backup is saved before priorities change.
+- `Application` owns immutable snapshots in a `Ref`. A semaphore serializes refreshes and dashboard mutations. Refresh requests share a completed result only when its account scope covers the caller; provider calls have concurrency three. The backup is saved before priorities change.
 - `serve` owns the listener, request fibers, periodic refresh, and sockets in a scope. Disconnects interrupt request work. SIGINT and SIGTERM interrupt polling, abort outstanding fetches, and close the listener and tunnels through `NodeRuntime.runMain`.
 
 Pure quota and routing functions remain ordinary TypeScript. Wrapping a calculation in an Effect would add no useful control over its behavior. The `record` helpers are confined to external payload interpretation; internal snapshots have schema-derived types.

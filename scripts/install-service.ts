@@ -86,7 +86,7 @@ const install = Effect.gen(function* () {
         { quiet: true },
       ).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (active) {
         stopped.push(unit);

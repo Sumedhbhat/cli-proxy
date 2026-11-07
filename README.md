@@ -198,4 +198,4 @@ Application sources are TypeScript executed by Node 24. Effect 4.0.6 manages I/O
 
 Run `npm run build` after editing the dashboard. It generates the browser bundle, the stable `scripts/claude-client.js` launcher, and a standalone Effect credential helper. Generated JavaScript is ignored by Git. The helper contains the path to `.env`, never its contents, and works without the checkout or npm dependencies after installation.
 
-The runtime and verification details are in [the migration notes](docs/effect-migration.md).
+The runtime and verification details are in [the migration notes](docs/effect-migration.md). The [OpenCode reference review](docs/opencode-quality-review.md) records the source comparison and its resulting fixes.

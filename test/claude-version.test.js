@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEngine } from "./effect-helpers.js";
+import { createEngine } from "./effect-helpers.ts";
 import { fallbackClaudeVersion } from "../src/claude-version.ts";
 
 // The Claude quota probe identifies itself as Claude Code. It used to send a hardcoded

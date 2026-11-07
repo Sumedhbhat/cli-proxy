@@ -46,12 +46,13 @@ export type QuotaAccount = Pick<Account, "id" | "provider" | "supportsQuota"> &
   Partial<Pick<Account, "accountId">>;
 export type RankedAccount = Pick<Account, "id" | "name" | "provider"> &
   Partial<Pick<Account, "disabled" | "runtimeOnly" | "quota">>;
-export interface Rank {
-  readonly id: string;
-  readonly name: string;
-  readonly priority: number;
-  readonly reason: string;
-}
+export const Rank = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  priority: Schema.Number,
+  reason: Schema.String,
+});
+export type Rank = typeof Rank.Type;
 export const Settings = Schema.Struct({
   scheduler: Schema.Boolean,
   intervalSeconds: Schema.Int.check(
@@ -71,19 +72,16 @@ export const QuotaCache = Schema.Array(
   }),
 );
 export type QuotaCache = typeof QuotaCache.Type;
-export interface Routing {
-  readonly strategy?: string;
-  readonly affinity: boolean;
-}
-export interface Event {
-  readonly at: string;
-  readonly type: string;
-  readonly message: string;
-  readonly detail?: string;
-  readonly status?: number;
-  readonly durationMs?: number;
-  readonly resetsAt?: string;
-}
+export const Event = Schema.Struct({
+  at: Schema.String,
+  type: Schema.String,
+  message: Schema.String,
+  detail: Schema.optional(Schema.String),
+  status: Schema.optional(Schema.Number),
+  durationMs: Schema.optional(Schema.Number),
+  resetsAt: Schema.optional(Schema.String),
+});
+export type Event = typeof Event.Type;
 export type DashboardState = typeof DashboardState.Type;
 
 export class EngineError extends Data.TaggedError("EngineError")<{
@@ -114,23 +112,6 @@ export const DashboardState = Schema.Struct({
   lastRefresh: Schema.NullOr(Schema.String),
   refreshError: Schema.NullOr(Schema.String),
   schedulerError: Schema.NullOr(Schema.String),
-  ranks: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      name: Schema.String,
-      priority: Schema.Number,
-      reason: Schema.String,
-    }),
-  ),
-  events: Schema.Array(
-    Schema.Struct({
-      at: Schema.String,
-      type: Schema.String,
-      message: Schema.String,
-      detail: Schema.optional(Schema.String),
-      status: Schema.optional(Schema.Number),
-      durationMs: Schema.optional(Schema.Number),
-      resetsAt: Schema.optional(Schema.String),
-    }),
-  ),
+  ranks: Schema.Array(Rank),
+  events: Schema.Array(Event),
 });

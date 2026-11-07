@@ -72,13 +72,10 @@ export const makeEngine = Effect.fn("Engine.make")(function* (
           await response.body?.cancel();
           throw new Error(`HTTP ${response.status}`);
         }
-        return response.json() as Promise<unknown>;
+        const value: unknown = await response.json();
+        return value;
       },
-      catch: (cause) =>
-        new EngineError({
-          message: `Engine ${path.split("?")[0]} request failed`,
-          cause,
-        }),
+      catch: (cause) => cause,
     }).pipe(
       Effect.timeout(timeoutMs),
       Effect.mapError(
@@ -206,7 +203,7 @@ export const makeEngine = Effect.fn("Engine.make")(function* (
           },
         },
         2000,
-      ).pipe(Effect.catch(() => Effect.succeed(null)));
+      ).pipe(Effect.orElseSucceed(() => null));
       if (details && Array.isArray(details.credits)) {
         data = {
           ...data,

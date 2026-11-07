@@ -197,7 +197,7 @@ export function rankAccounts(
     const scored = pool
       .map((a) => {
         const fresh =
-          !!a.quota && now - Date.parse(a.quota!.fetchedAt) <= staleMs;
+          !!a.quota && now - Date.parse(a.quota.fetchedAt) <= staleMs;
         const w = weeklyWindow(a);
         // Never invent replenishment from a local timer. A fresh provider poll must confirm it.
         const future = w?.resetsAt && Date.parse(w.resetsAt ?? "") > now;
@@ -269,41 +269,38 @@ export function nearestResetInfo(
 ) {
   const provider = modelProvider(model);
   if (!provider) return null;
-  const resets = accounts
-    .filter(
-      (a) =>
-        a.provider === provider &&
-        !a.disabled &&
-        !a.runtimeOnly &&
-        a.quota &&
-        (provider === "claude" ||
-          now - Date.parse(a.quota!.fetchedAt) <= 180000),
+  const resets = accounts.flatMap((a) => {
+    const quota = a.quota;
+    if (
+      a.provider !== provider ||
+      a.disabled ||
+      a.runtimeOnly ||
+      !quota ||
+      (provider !== "claude" && !(now - Date.parse(quota.fetchedAt) <= 180000))
     )
-    .flatMap((a) => {
-      const windows = a.quota!.windows.filter((w) => {
-        const family = /opus|sonnet|fable/i.exec(w.id + " " + w.label)?.[0];
-        return !family || model.toLowerCase().includes(family.toLowerCase());
-      });
-      const blocked = windows.filter((w) => w.remaining <= 0);
-      const relevant = blocked.length
-        ? blocked
-        : windows.filter((w) => Date.parse(w.resetsAt ?? "") > now);
-      const times = relevant.map((w) => Date.parse(w.resetsAt ?? ""));
-      if (!times.length || times.some((t) => !Number.isFinite(t))) return [];
-      const time = blocked.length ? Math.max(...times) : Math.min(...times);
-      if (time <= now) return [];
-      const window = relevant.find(
-        (w) => Date.parse(w.resetsAt ?? "") === time,
-      );
-      const rateLimitType =
-        window &&
-        /^five_hour$|^seven_day(?:_opus|_sonnet|_fable)?$/.test(window.id)
-          ? window.id
-          : undefined;
-      return [
-        { resetsAt: new Date(time).toISOString(), rateLimitType, provider },
-      ];
+      return [];
+    const windows = quota.windows.filter((w) => {
+      const family = /opus|sonnet|fable/i.exec(w.id + " " + w.label)?.[0];
+      return !family || model.toLowerCase().includes(family.toLowerCase());
     });
+    const blocked = windows.filter((w) => w.remaining <= 0);
+    const relevant = blocked.length
+      ? blocked
+      : windows.filter((w) => Date.parse(w.resetsAt ?? "") > now);
+    const times = relevant.map((w) => Date.parse(w.resetsAt ?? ""));
+    if (!times.length || times.some((t) => !Number.isFinite(t))) return [];
+    const time = blocked.length ? Math.max(...times) : Math.min(...times);
+    if (time <= now) return [];
+    const window = relevant.find((w) => Date.parse(w.resetsAt ?? "") === time);
+    const rateLimitType =
+      window &&
+      /^five_hour$|^seven_day(?:_opus|_sonnet|_fable)?$/.test(window.id)
+        ? window.id
+        : undefined;
+    return [
+      { resetsAt: new Date(time).toISOString(), rateLimitType, provider },
+    ];
+  });
   return (
     resets.sort((a, b) => Date.parse(a.resetsAt) - Date.parse(b.resetsAt))[0] ||
     null

@@ -129,9 +129,7 @@ export const serve = Effect.gen(function* () {
         json(
           res,
           200,
-          yield* engine.request(
-            `get-auth-status?state=${encodeURIComponent(url.searchParams.get("state") || "")}`,
-          ),
+          yield* app.oauthStatus(url.searchParams.get("state") || ""),
         );
         return;
       }
@@ -159,11 +157,7 @@ export const serve = Effect.gen(function* () {
             status: 409,
             message: "Credential import is available in live mode",
           });
-        yield* engine.request(`auth-files?name=${encodeURIComponent(name)}`, {
-          method: "POST",
-          body: credential,
-        });
-        yield* app.refresh();
+        yield* app.importAccount(name, credential);
         json(res, 200, { ok: true });
         return;
       }
