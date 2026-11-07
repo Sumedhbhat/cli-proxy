@@ -6,7 +6,7 @@ import { demoAccounts } from "./demo.ts";
 import { rankAccounts } from "./quota.ts";
 import { codexUsageLimit } from "./codex-limit.ts";
 import { InputError, message, record } from "./domain.ts";
-import type { Account, DashboardState, Event } from "./domain.ts";
+import type { Account, DashboardState, Event, JsonObject } from "./domain.ts";
 
 export const makeApplication = Effect.gen(function* () {
   const config = yield* AppConfig;
@@ -49,6 +49,10 @@ export const makeApplication = Effect.gen(function* () {
     generation: number;
     scope: { readonly accountID?: string } | null;
   }>({ generation: 0, scope: null });
+  const invalidateRefreshCoverage = Ref.update(
+    completedRefresh,
+    ({ generation }) => ({ generation, scope: null }),
+  );
   const update = (f: (s: DashboardState) => DashboardState) =>
     Ref.update(state, f);
   const snapshot = Ref.get(state).pipe(
@@ -247,10 +251,7 @@ export const makeApplication = Effect.gen(function* () {
           });
         // A resumed account may have been skipped by an older full refresh.
         // Invalidate before the mutation: interruption can leave its outcome unknown.
-        yield* Ref.update(completedRefresh, ({ generation }) => ({
-          generation,
-          scope: null,
-        }));
+        yield* invalidateRefreshCoverage;
         if (!config.demo) yield* engine.status(account, disabled);
         yield* update((s) => ({
           ...s,
@@ -264,6 +265,21 @@ export const makeApplication = Effect.gen(function* () {
         );
       }),
     );
+  const importAccount = Effect.fn("Application.importAccount")(function* (
+    name: string,
+    credential: JsonObject,
+  ) {
+    yield* mutations.withPermit(
+      Effect.gen(function* () {
+        yield* invalidateRefreshCoverage;
+        yield* engine.request(`auth-files?name=${encodeURIComponent(name)}`, {
+          method: "POST",
+          body: credential,
+        });
+      }),
+    );
+    yield* refresh();
+  });
   const [files, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     engine.authFiles(3000),
     5000,
@@ -281,7 +297,15 @@ export const makeApplication = Effect.gen(function* () {
         }),
       ),
     );
-  return { snapshot, log, refresh, setScheduler, setDisabled, codexLimit };
+  return {
+    snapshot,
+    log,
+    refresh,
+    setScheduler,
+    setDisabled,
+    importAccount,
+    codexLimit,
+  };
 });
 export type ApplicationService = Effect.Success<typeof makeApplication>;
 export class Application extends Context.Service<

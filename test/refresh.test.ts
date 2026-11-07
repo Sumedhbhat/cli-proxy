@@ -2,7 +2,63 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Deferred, Effect, Fiber } from "effect";
 import { makeApplication } from "../src/application.ts";
-import { account, applicationLayer } from "./application-fixture.ts";
+import { account, quota, applicationLayer } from "./application-fixture.ts";
+
+test(
+  "an imported account is refreshed after an older full refresh finishes",
+  { timeout: 5000 },
+  async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const accounts = [account("B")];
+        let requested = false;
+        const app = yield* makeApplication.pipe(
+          Effect.provide(
+            applicationLayer({
+              accounts,
+              request: (path, options) =>
+                path === "config"
+                  ? Effect.succeed({ routing: {} })
+                  : Effect.sync(() => {
+                      assert.equal(path, "auth-files?name=A.json");
+                      assert.deepEqual(options, {
+                        method: "POST",
+                        body: { provider: "codex" },
+                      });
+                      accounts.push(account("A"));
+                      return {};
+                    }),
+              quota: (account) =>
+                Effect.gen(function* () {
+                  if (requested && account.id === "B") {
+                    yield* Deferred.succeed(entered, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  return quota(75);
+                }),
+            }),
+          ),
+        );
+        yield* app.refresh();
+        requested = true;
+        const full = yield* app.refresh().pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const imported = yield* app
+          .importAccount("A.json", { provider: "codex" })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(full);
+        yield* Fiber.join(imported);
+        const state = yield* app.snapshot;
+        const added = state.accounts.find((a) => a.id === "A");
+        assert.equal(added?.quota?.windows[0]?.remaining, 75);
+      }).pipe(Effect.timeout(3000)),
+    );
+  },
+);
 
 for (const interrupted of [false, true]) {
   test(
@@ -43,20 +99,7 @@ for (const interrupted of [false, true]) {
                         yield* Deferred.await(release);
                       }
                     }
-                    return {
-                      windows: [
-                        {
-                          id: "weekly",
-                          label: "Weekly limit",
-                          remaining: 75,
-                          resetsAt: null,
-                        },
-                      ],
-                      fetchedAt: new Date().toISOString(),
-                      availableResets: null,
-                      nextResetExpiresAt: null,
-                      plan: null,
-                    };
+                    return quota(75);
                   }),
               }),
             ),
@@ -150,20 +193,7 @@ for (const { label, ownerScope, waiterScope, expectedCalls, expectedB } of [
                       yield* Deferred.await(release);
                     }
                   }
-                  return {
-                    windows: [
-                      {
-                        id: "weekly",
-                        label: "Weekly limit",
-                        remaining: requested ? 75 : 50,
-                        resetsAt: null,
-                      },
-                    ],
-                    fetchedAt: new Date().toISOString(),
-                    availableResets: null,
-                    nextResetExpiresAt: null,
-                    plan: null,
-                  };
+                  return quota(requested ? 75 : 50);
                 }),
             }),
           ),
@@ -209,20 +239,7 @@ test(
                     yield* Deferred.succeed(entered, undefined);
                     yield* Effect.never;
                   }
-                  return {
-                    windows: [
-                      {
-                        id: "weekly",
-                        label: "Weekly limit",
-                        remaining: calls === 1 ? 80 : 60,
-                        resetsAt: null,
-                      },
-                    ],
-                    fetchedAt: new Date().toISOString(),
-                    availableResets: null,
-                    nextResetExpiresAt: null,
-                    plan: null,
-                  };
+                  return quota(calls === 1 ? 80 : 60);
                 }),
               saveQuota: () =>
                 Effect.sync(() => {

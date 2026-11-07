@@ -4,7 +4,7 @@ import { Engine } from "../src/engine.ts";
 import type { EngineService } from "../src/engine.ts";
 import { Storage } from "../src/storage.ts";
 import type { StorageService } from "../src/storage.ts";
-import type { Account } from "../src/domain.ts";
+import type { Account, Quota } from "../src/domain.ts";
 
 export const account = (id: string): Account => ({
   id,
@@ -24,6 +24,14 @@ export const account = (id: string): Account => ({
   quotaError: null,
 });
 
+export const quota = (remaining: number): Quota => ({
+  windows: [{ id: "weekly", label: "Weekly limit", remaining, resetsAt: null }],
+  fetchedAt: new Date().toISOString(),
+  availableResets: null,
+  nextResetExpiresAt: null,
+  plan: null,
+});
+
 // Every method is checked against its production service. Unexpected mutations
 // fail the test instead of disappearing behind an incomplete fixture.
 const unexpected = (operation: string) =>
@@ -31,6 +39,7 @@ const unexpected = (operation: string) =>
 export const applicationLayer = (options: {
   readonly accounts: ReadonlyArray<Account>;
   readonly quota: EngineService["quota"];
+  readonly request?: EngineService["request"];
   readonly status?: EngineService["status"];
   readonly saveQuota?: StorageService["saveQuota"];
 }) =>
@@ -50,7 +59,12 @@ export const applicationLayer = (options: {
       Engine,
       Engine.of({
         accounts: () => Effect.succeed([...options.accounts]),
-        request: () => Effect.succeed({ routing: {} }),
+        request:
+          options.request ??
+          ((path) =>
+            path === "config"
+              ? Effect.succeed({ routing: {} })
+              : unexpected(`Engine.request ${path}`)),
         authFiles: () => Effect.succeed([]),
         quota: options.quota,
         patch: () => unexpected("Engine.patch"),
