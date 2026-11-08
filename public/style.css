@@ -462,3 +462,11 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   .daily-plot { height: 150px; padding-left: 54px; }
   .daily-axis { width: 46px; font-size: 10px; }
 }
+
+.ranking-more summary { color: var(--muted); font-size: 13px; cursor: pointer; padding: 4px 0; }
+.ranking-more summary .fine { margin-left: 7px; }
+.ranking-more .show-less { display: none; }
+.ranking-more[open] > summary .show-more { display: none; }
+.ranking-more[open] > summary .show-less { display: inline; }
+
+.ranking-more[open] > summary .fine { display: none; }

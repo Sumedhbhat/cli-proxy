@@ -143,10 +143,11 @@ function bars(
 ) {
   const sorted = rows
       .filter((r) => r.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10),
+      .sort((a, b) => b.value - a.value),
     max = Math.max(1, ...sorted.map((r) => r.value));
-  return `<section class="panel analytics-bars"><h2>${h.esc(title)}</h2>${sorted.length ? `<ol>${sorted.map((r) => `<li><div><span title="${h.esc(r.name)}">${h.esc(r.name)}</span><strong>${format(r.value)}</strong></div><div class="metric-track"><i style="width:${(100 * r.value) / max}%"></i></div>${r.detail ? `<small>${h.esc(r.detail)}</small>` : ""}</li>`).join("")}</ol>` : '<p class="chart-empty">No attributed observations for these filters yet.</p>'}</section>`;
+  const renderRow = (r: (typeof rows)[number]) =>
+    `<li><div><span title="${h.esc(r.name)}">${h.esc(r.name)}</span><strong>${format(r.value)}</strong></div><div class="metric-track"><i style="width:${(100 * r.value) / max}%"></i></div>${r.detail ? `<small>${h.esc(r.detail)}</small>` : ""}</li>`;
+  return `<section class="panel analytics-bars"><h2>${h.esc(title)}</h2>${sorted.length ? `<ol>${sorted.slice(0, 5).map(renderRow).join("")}</ol>${sorted.length > 5 ? `<details class="ranking-more" data-usage-detail="ranking-${h.esc(title)}"><summary><span class="show-more">Show more</span><span class="show-less">Show less</span> <span class="fine">(${sorted.length - 5})</span></summary><ol start="6">${sorted.slice(5).map(renderRow).join("")}</ol></details>` : ""}` : '<p class="chart-empty">No attributed observations for these filters yet.</p>'}</section>`;
 }
 function distribution(activity: NonNullable<Report["activity"]>, h: Helpers) {
   const a = taskAnalytics(activity),
