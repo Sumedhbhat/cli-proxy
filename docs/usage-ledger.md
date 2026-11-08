@@ -107,25 +107,25 @@ Kinds: `subscription`, `credit_purchase`, `usage_charge`, `credit_consumption`, 
 
 v8.0.59 was released 2026-11-07, inside the 14-day dependency cooldown; adopting it early was an explicit owner decision because the usage fixes and plugin host it carries are what the ledger relies on.
 
-Build the plugin (on this host there is no system C compiler; Zig works as one):
+Install or update the complete application, including the matching ledger plugin,
+with one command from the checkout:
 
 ```sh
-GO=/path/to/go1.27.3/bin/go CC="zig cc -target x86_64-linux-gnu.2.17" npm run plugin:build
+npm run setup
 ```
 
-The output is `.local/plugins/cli-proxy-ledger.so`, with `.local/plugins/cli-proxy-ledger.json` recording its SHA-256, the toolchain, and the source commit.
+Setup checks the Go and C toolchains, installs npm dependencies, builds the plugin,
+prepares the engine, deploys a complete release, configures clients, and verifies
+readiness. The plugin manifest records its SHA-256, toolchain, and source commit.
+`GO` and `CC` can select custom installed compilers. `npm run plugin:build` remains
+a lower-level development command; it is not a required separate setup step.
 
-Deploy to the running installation:
-
-```sh
-npm run setup          # downloads and verifies engine v8.0.59; adds LEDGER_DEVICE_SECRET and the plugin block
-npm run plugin:build
-npm run service:install
-```
-
-`service:install` copies the engine binary and plugin into `~/.local/share/cli-proxy/.local/`, adds the ledger secret and plugin block to the deployed `.env` and `engine.yaml` (existing lines are left as they are), and restarts **both** services. Restarting the engine interrupts in-flight Claude and Codex sessions, so run it between sessions. The configuration step refuses to proceed when `engine.yaml` lists keys other than `PROXY_API_KEY` or already has a different `plugins` section; it then leaves both files untouched and the gateway runs without a ledger.
-
-To remove the ledger, delete the `plugins:` block from the deployed `engine.yaml` and restart the engine. The accounting database stays readable.
+The installed engine and plugin live together under
+`~/.local/share/cli-proxy/releases/<release-id>/`. Credentials, the accounting
+database, and the outbox remain in the stable `.local/` data directory. Setup
+restarts both services during activation, which interrupts in-flight sessions.
+See [deployment and recovery](deployment.md) for configuration, compatibility,
+monitoring, and rollback behavior.
 
 ## Operating cost
 

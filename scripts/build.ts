@@ -8,6 +8,26 @@ NodeRuntime.runMain(
     [
       Effect.tryPromise(() =>
         build({
+          entryPoints: ["scripts/recovery-main.ts"],
+          outfile: "dist/recovery.cjs",
+          bundle: true,
+          format: "cjs",
+          platform: "node",
+          target: "node24",
+        }),
+      ),
+      Effect.tryPromise(() =>
+        build({
+          entryPoints: ["scripts/maintenance.ts"],
+          outfile: "dist/maintenance.cjs",
+          bundle: true,
+          format: "cjs",
+          platform: "node",
+          target: "node24",
+        }),
+      ),
+      Effect.tryPromise(() =>
+        build({
           entryPoints: ["public/app.ts"],
           outfile: "public/app.js",
           bundle: true,

@@ -12,7 +12,7 @@
     "engine": "node scripts/engine.ts",
     "plugin:build": "node scripts/build-plugin.ts",
     "test:engine": "node --test test/ledger-engine.test.ts",
-    "service:install": "node scripts/install-service.ts",
+    "service:install": "node scripts/setup.ts",
     "clients:configure": "node scripts/configure-clients.ts",
     "restore-priorities": "node scripts/restore-priorities.ts",
     "export-demo": "node scripts/export-demo.ts",
@@ -21,14 +21,16 @@
     "build": "node scripts/build.ts",
     "prestart": "node scripts/ensure-built.ts",
     "predemo": "node scripts/ensure-built.ts",
-    "preservice:install": "npm run build",
     "pretest": "npm run build",
     "typecheck": "tsc --noEmit",
     "migration:check": "node scripts/check-migration.ts",
     "preclients:configure": "node scripts/ensure-built.ts",
     "format": "prettier --write src scripts public/*.ts test tsconfig.json package.json",
     "format:check": "prettier --check src scripts public/*.ts test tsconfig.json package.json",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "recovery:install": "npm run build && node scripts/install-recovery.ts",
+    "service:status": "node dist/maintenance.cjs status",
+    "service:rollback": "node dist/maintenance.cjs rollback"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.6",

@@ -2,6 +2,8 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Fiber, FiberSet, Layer, Schedule, Schema } from "effect";
 import http from "node:http";
+import { basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
 import { AppConfig, ConfigLive } from "./config.ts";
 import { Engine, EngineLive } from "./engine.ts";
@@ -66,7 +68,13 @@ export const serve = Effect.gen(function* () {
       return;
     }
     if (path === "/healthz") {
-      json(res, 200, { status: "ok", demo: config.demo });
+      json(res, 200, {
+        status: "ok",
+        demo: config.demo,
+        release:
+          process.env.CLI_PROXY_RELEASE ||
+          basename(fileURLToPath(new URL("../", import.meta.url))),
+      });
       return;
     }
     if (path.startsWith("/api/")) {
@@ -314,20 +322,22 @@ export const serve = Effect.gen(function* () {
   console.log(
     `CLI Proxy ${config.demo ? "(demo)" : ""}: http://127.0.0.1:${(server.address() as { port: number }).port}`,
   );
-  yield* app
-    .refresh()
-    .pipe(
-      Effect.repeat(
-        Schedule.spaced(
-          config.demo
-            ? 60000
-            : (yield* app.snapshot).settings.intervalSeconds * 1000,
+  if (!process.argv.includes("--preflight"))
+    yield* app
+      .refresh()
+      .pipe(
+        Effect.repeat(
+          Schedule.spaced(
+            config.demo
+              ? 60000
+              : (yield* app.snapshot).settings.intervalSeconds * 1000,
+          ),
         ),
-      ),
-      Effect.forkScoped,
-    );
+        Effect.forkScoped,
+      );
   // Ingestion runs in the server scope: shutdown interrupts it between commits.
-  if (!config.demo) yield* ingestLoop.pipe(Effect.forkScoped);
+  if (!config.demo && !process.argv.includes("--preflight"))
+    yield* ingestLoop.pipe(Effect.forkScoped);
   yield* Effect.never;
 });
 const infrastructure = Layer.mergeAll(ConfigLive, NodeServices.layer);

@@ -17,20 +17,28 @@ Open http://127.0.0.1:8318. Demo mode uses sample accounts and rejects inference
 
 ## Run with your accounts
 
-Automatic engine installation supports Linux and macOS on x64 and arm64, with `tar` available. Run `npm ci` in the checkout before using the setup commands.
+On Linux, run one command from the checkout for both first installation and updates:
 
 ```sh
 npm run setup
-npm run engine
 ```
 
-In another terminal, after stopping any demo process:
+You do not need to run `npm ci`, build the plugin, configure clients, or start the
+services separately. Setup checks host prerequisites, installs locked project
+dependencies, builds the dashboard and ledger plugin, prepares the verified engine,
+installs independent recovery launchers, deploys a verified release, configures
+coding clients and detected T3 profiles, and verifies the running services.
+`npm run service:install` is an alias for the same complete workflow.
 
-```sh
-npm start
-```
+The host must have Node.js 24+, npm, Go 1.26+, a C compiler, tar, and systemd user
+services. Missing prerequisites stop setup before it changes dependencies or
+services. Setup does not install OS packages. Fresh provider account sign-in is
+interactive through the dashboard. Existing credentials and tailnet routes are
+preserved. A dependency or build failure leaves the current services running.
 
 Setup downloads CLIProxyAPI **v8.0.59**, published November 7, 2026, and verifies the archive against the release's SHA-256 checksum manifest. This release was adopted inside the 14-day dependency cooldown by explicit decision, because the usage ledger relies on its usage fixes and plugin host. Setup preserves existing `.env` and engine settings; it only adds the usage-ledger secret and plugin block when they are missing (see [Usage and cost](#usage-and-cost)).
+
+If the release download times out or returns a temporary HTTP error, setup switches to GitHub's API asset route. API requests retry temporary failures up to twice, waiting one second and then two seconds. Each archive attempt allows five minutes for the complete transfer; checksum and release-metadata requests allow 30 seconds. Both routes require the same SHA-256 verification before installing the engine.
 
 Open http://127.0.0.1:8318 or your tailnet URL. The dashboard opens directly without a console key. Use **Connect account** for Claude or Codex OAuth. If the provider redirects to an unreachable localhost address, paste that complete callback URL into the console's callback field. Existing CLIProxyAPI credential JSON files can also be imported.
 
@@ -45,11 +53,9 @@ The engine's credential files are under `.local/auth/`. `.env`, engine configura
 
 ## Connect coding clients
 
-On the proxy host, run the following to configure both installed CLIs automatically:
-
-```sh
-npm run clients:configure
-```
+`npm run setup` configures both installed CLIs automatically. The lower-level
+`npm run clients:configure` command remains available for changing only client
+settings; it is not another required installation step.
 
 This backs up your user settings under `~/.local/share/cli-proxy/client-config-backups/`, points Codex and Claude Code at the local gateway, and installs a private credential helper. The helper reads the API key from the deployed `.env`; you don't need to copy the key into either client's settings or export it from every shell. Restart existing CLI sessions after changing their configuration.
 
@@ -188,18 +194,32 @@ Build the plugin with `npm run plugin:build` (Go 1.27.3 and a C compiler) before
 On Linux, stop any manually started engine and console, then run:
 
 ```sh
-npm run service:install
+npm run setup
 ```
 
-Run this from a checkout with development dependencies installed. It builds the browser bundle and launchers, copies the app and lockfile to `~/.local/share/cli-proxy/`, installs runtime dependencies with `npm ci --omit=dev --ignore-scripts`, enables two systemd user services, and enables user lingering. The services start at boot without a desktop sign-in and restart after a failure. The installation survives closing T3 or removing this worktree. Tailscale Serve keeps the HTTPS listener configured across restarts.
+Run this from a checkout with development dependencies installed. Installation now
+prepares a complete versioned release under `~/.local/share/cli-proxy/releases/`,
+checks it with isolated engine and gateway processes, and switches the stable
+`current` link only after preparation succeeds. Live readiness checks must pass
+before success is reported. Failed activations restore the previous verified
+release. Existing `.env`, credentials, settings, and accounting data stay outside
+releases at their stable paths.
 
-On this host, NetworkManager and Tailscale are enabled at boot. Both saved Wi-Fi connections reconnect automatically with system-stored credentials, so networking does not wait for a desktop sign-in. After power is restored and the computer boots, the console becomes reachable once the network is back.
+Systemd starts the services at boot with user lingering, bounds repeated startup
+failures, and runs an independent health timer. Tailscale Serve keeps the same
+URL across releases. Deployment restarts both services and interrupts active
+sessions; run it between sessions.
 
-The deployed `.env`, credentials, and scheduler state live under `~/.local/share/cli-proxy/`. Subsequent service installs update the code and preserve those files. Poppins is bundled locally under the SIL Open Font License; no font CDN is used.
+Setup also installs `codex-direct` and `claude-direct` for
+native-provider access when the proxy is unavailable. See [deployment and
+recovery](docs/deployment.md) for release layout, schema compatibility, T3 recovery
+instances, incident reports, and rollback commands.
 
 ```sh
-systemctl --user status cli-proxy-engine cli-proxy-console
-journalctl --user -u cli-proxy-console -n 50
+systemctl --user status cli-proxy-engine cli-proxy-console cli-proxy-health.timer
+journalctl --user -u cli-proxy-health.service -n 30
+node ~/.local/share/cli-proxy/maintenance.cjs status
+node ~/.local/share/cli-proxy/maintenance.cjs rollback
 ```
 
 ## Effect implementation
