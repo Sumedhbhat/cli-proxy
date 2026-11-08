@@ -380,7 +380,8 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
 
 /* Charts share the existing provider colors and keep cards below the visual overview. */
 .workspace, main, #main, .grid-two > *, .actions, .usage-filters > * { min-width: 0; }
-.usage-graphs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px; }
+.usage-graphs { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 20px; }
+.usage-graphs > :last-child { grid-column: 1 / -1; }
 .usage-graphs h2 { font-size: 17px; margin: 0 0 12px; }
 .graph-number { font: 600 34px/1.2 var(--mono); letter-spacing: -1px; }
 .graph-number small { margin-left: 9px; font: 12px Poppins,sans-serif; letter-spacing: 0; color: var(--muted); }
@@ -402,7 +403,7 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
 .task-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin: 20px 0; }
 .task-stats span { display: block; color: var(--muted); font-size: 12px; }
 .task-stats strong { font: 600 24px var(--mono); }
-@media (max-width: 1190px) { .usage-graphs { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 650px) { .usage-graphs { grid-template-columns: minmax(0,1fr); } }
 @media (max-width: 650px) {
   html, body { max-width: 100%; }
   .workspace, main, #main { max-width: 100%; }
