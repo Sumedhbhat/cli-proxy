@@ -117,7 +117,7 @@ async function installationFixture(t) {
   await mkdir(join(source, ".local/auth"), { recursive: true });
   await writeFile(join(source, ".env"), "PROXY_API_KEY=fixture-key\n");
   await writeFile(join(source, ".local/engine.yaml"), 'auth-dir: "fixture"\n');
-  await writeFile(join(source, ".local/engine-version"), "8.0.23");
+  await writeFile(join(source, ".local/engine-version"), "8.0.59");
   await writeFile(join(source, ".local/cli-proxy-api"), "#!/bin/sh\nexit 0\n", {
     mode: 0o700,
   });
@@ -285,6 +285,37 @@ test(
         .filter((args) => args.includes("start"))
         .map((args) => args.at(-1)),
       ["cli-proxy-console.service"],
+    );
+  },
+);
+
+test(
+  "setup adds the usage ledger to a compatible engine configuration once",
+  { timeout: 10000 },
+  async (t) => {
+    const { source } = await installationFixture(t);
+    const yaml = 'auth-dir: "fixture"\napi-keys:\n  - "fixture-key"\n';
+    await writeFile(join(source, ".local/engine.yaml"), yaml);
+    await run(process.execPath, ["scripts/setup.ts"], { cwd: source });
+    const env = await readFile(join(source, ".env"), "utf8");
+    assert.match(
+      env,
+      /^PROXY_API_KEY=fixture-key\nLEDGER_DEVICE_SECRET=[0-9a-f]{64}\n$/,
+    );
+    const configured = await readFile(
+      join(source, ".local/engine.yaml"),
+      "utf8",
+    );
+    assert.ok(configured.startsWith(yaml));
+    assert.match(configured, /cli-proxy-ledger:\n {6}enabled: true/);
+    assert.match(configured, /outbox-dir: ".*\/\.local\/usage-outbox"/);
+    // The engine key is stored only as a digest.
+    assert.ok(!configured.slice(yaml.length).includes("fixture-key"));
+    await run(process.execPath, ["scripts/setup.ts"], { cwd: source });
+    assert.equal(await readFile(join(source, ".env"), "utf8"), env);
+    assert.equal(
+      await readFile(join(source, ".local/engine.yaml"), "utf8"),
+      configured,
     );
   },
 );

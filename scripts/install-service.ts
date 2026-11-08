@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, FileSystem } from "effect";
 import { command } from "../src/command.ts";
 import { InputError } from "../src/domain.ts";
+import { configureLedgerOrSkip } from "../src/ledger-setup.ts";
 import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,7 +135,15 @@ const install = Effect.gen(function* () {
     }
     for (const path of ["cli-proxy-api", "engine-version"])
       yield* fs.copy(join(source, ".local", path), join(dataDir, path));
+    if (yield* exists(join(source, ".local/plugins")))
+      yield* fs.copy(join(source, ".local/plugins"), join(dataDir, "plugins"));
   }
+  // Adds the ledger secret and plugin block to the deployed files if missing.
+  yield* configureLedgerOrSkip(
+    join(destination, ".env"),
+    join(dataDir, "engine.yaml"),
+    dataDir,
+  );
   // Runtime dependencies are installed from the reviewed lockfile; no install scripts run.
   yield* command(
     "npm",

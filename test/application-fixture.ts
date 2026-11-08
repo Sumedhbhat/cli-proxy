@@ -53,6 +53,7 @@ export const applicationLayer = (options: {
         engineURL: "http://unused",
         apiKey: Redacted.make("unused"),
         managementKey: Redacted.make("unused"),
+        ledgerDeviceSecret: null,
       }),
     ),
     Layer.succeed(

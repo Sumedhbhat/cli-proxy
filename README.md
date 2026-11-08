@@ -30,7 +30,7 @@ In another terminal, after stopping any demo process:
 npm start
 ```
 
-Setup downloads CLIProxyAPI **v8.0.23**, published October 9, 2026, and verifies the archive against the release's SHA-256 checksum manifest. The pinned release meets the 14-day dependency cooldown. Setup preserves an existing `.env` and engine configuration.
+Setup downloads CLIProxyAPI **v8.0.59**, published November 7, 2026, and verifies the archive against the release's SHA-256 checksum manifest. This release was adopted inside the 14-day dependency cooldown by explicit decision, because the usage ledger relies on its usage fixes and plugin host. Setup preserves existing `.env` and engine settings; it only adds the usage-ledger secret and plugin block when they are missing (see [Usage and cost](#usage-and-cost)).
 
 Open http://127.0.0.1:8318 or your tailnet URL. The dashboard opens directly without a console key. Use **Connect account** for Claude or Codex OAuth. If the provider redirects to an unreachable localhost address, paste that complete callback URL into the console's callback field. Existing CLIProxyAPI credential JSON files can also be imported.
 
@@ -126,7 +126,7 @@ routing:
 ws-auth: true
 ```
 
-Enable scheduling in **Routing settings**. The companion refuses to apply priorities unless the engine reports `fill-first` and session affinity. It uses the engine's supported legacy `/v0/management` API, verified against v8.0.23.
+Enable scheduling in **Routing settings**. The companion refuses to apply priorities unless the engine reports `fill-first` and session affinity. It uses the engine's supported legacy `/v0/management` API, verified against v8.0.59.
 
 ## How scheduling works
 
@@ -161,15 +161,27 @@ For a console started with `npm start`, run `npm run restore-priorities` in that
 npm run check
 ```
 
-Strict TypeScript, formatting, and the migration contract run before the tests. Tests cover provider quota normalization, reset order, exhausted and stale quotas, account priority updates, dashboard access without login, cross-origin writes, API-key enforcement, streaming, WebSocket upgrades, and management-route isolation. Integration tests use local fake engines and make no model calls. Command tests use temporary installations and fake service managers; they do not change the running deployment.
+Strict TypeScript, formatting, and the migration contract run before the tests. Tests cover token accounting, pricing, billing imports, ingestion recovery, provider quota normalization, reset order, exhausted and stale quotas, account priority updates, dashboard access without login, cross-origin writes, API-key enforcement, streaming, WebSocket upgrades, and management-route isolation. Integration tests use local fake engines and make no model calls. `npm run test:engine` runs the real CLIProxyAPI v8.0.59 binary with the built ledger plugin against a local mock provider; CI runs it on every pull request. Command tests use temporary installations and fake service managers; they do not change the running deployment.
 
 The installed engine was started and its management API was checked. Browser checks cover desktop and mobile layouts, filtering, search, email masking, and routing controls. **Real account OAuth, provider quota responses, and model inference still require your account sign-in and have not been exercised with real credentials.**
 
 Claude and Codex have built-in quota probes. Other providers need a CLIProxyAPI quota plugin; their sample demo values do not imply live integration. The gateway supports the listed OpenAI-compatible endpoints and Anthropic Messages, including count-tokens. It does not expose every endpoint the engine offers.
 
-The activity log stores only the latest 200 operational events in memory. It records request paths, status, and timing, not prompts, tokens, or inference bodies. This project does not add token-cost accounting. The rest of the video covers agent workflows and managing machines; see [the video review](docs/video-review.md) for the scope boundary.
+The activity log stores only the latest 200 operational events in memory. It records request paths, status, and timing, not prompts, tokens, or inference bodies. Token accounting lives in the separate usage ledger below. The rest of the video covers agent workflows and managing machines; see [the video review](docs/video-review.md) for the scope boundary.
 
 Dashboard access has no separate login or session expiry. The app binds to loopback; Tailscale Serve provides access from your tailnet. Cross-origin dashboard writes are rejected.
+
+## Usage and cost
+
+**Usage & cost** shows token usage for every execution that passes through this gateway, across Claude and Codex accounts and per device, with filters, daily trends, breakdowns, and CSV/JSON export. It keeps three figures apart:
+
+- **Observed tokens** are the counts Claude and Codex reported. Cache reads, cache writes, and output are separate buckets; reasoning is part of output and is never added twice. Executions without reported usage are **unknown**, not zero.
+- **API-equivalent value** prices those tokens at public API list prices from a dated catalog. It is an estimate of what the traffic would cost as API usage. Subscription usage is not billed per token, so it is not what you paid.
+- **Actual spending** comes only from billing records you add or import: plan fees, credit purchases, and usage charges. Credit consumption is shown but never added again.
+
+A small engine plugin (`engine-plugin/`, Go standard library only) writes sanitized usage metadata to an append-only outbox; the console ingests it into `.local/accounting.sqlite`. Prompts, responses, credentials, and error bodies are never stored. Give each machine its own key under **Devices**; the gateway signs the device identity for the engine, so attribution never depends on IP addresses or client-supplied labels. Coverage starts when the ledger starts, and known gaps, such as Codex streams a client cancels, are shown on the page.
+
+Build the plugin with `npm run plugin:build` (Go 1.27.3 and a C compiler) before `npm run service:install`. Design, failure handling, the list of known gaps, pricing sources, billing import format, and deployment are in [the usage-ledger notes](docs/usage-ledger.md).
 
 ## Keep it running
 

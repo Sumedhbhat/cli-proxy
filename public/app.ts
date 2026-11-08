@@ -9,6 +9,8 @@ import {
 } from "effect";
 import { DashboardState, JsonObject, message, record } from "../src/domain.ts";
 import type { Account, QuotaWindow } from "../src/domain.ts";
+import { usagePage, usageQuery, usageView } from "./usage.ts";
+import type { Report, UsageView } from "./usage.ts";
 declare global {
   interface Window {
     CLI_PROXY_BASE_URL?: string;
@@ -43,6 +45,7 @@ const navigationIcons: Record<string, string> = {
   logs: '<path d="M8 21h11a2 2 0 0 0 2-2V7H9V5a2 2 0 0 0-4 0v12H3a2 2 0 0 0 4 0V7M11 11h6M11 15h6"/>',
   routing:
     '<path d="M3 6h5M12 6h9M3 12h10M17 12h4M3 18h3M10 18h11M8 3v6M13 9v6M6 15v6"/>',
+  usage: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
 };
 for (const link of document.querySelectorAll<HTMLElement>("nav [data-page]")) {
   const icon = link.querySelector("span")!;
@@ -72,6 +75,7 @@ const titles: Record<string, string> = {
   connect: "Connect account",
   logs: "Activity log",
   routing: "Routing settings",
+  usage: "Usage & cost",
 };
 const esc = (value: unknown) =>
   String(value ?? "").replace(
@@ -221,6 +225,8 @@ function heading(actions = "") {
           logs: "Gateway requests and account changes. Prompts are never recorded.",
           routing:
             "Use expiring quota first. Keep existing sessions on their account.",
+          usage:
+            "Traffic through this gateway. Estimates are list-price values, not charges.",
         }[page];
   return `<div class="page-head"><div><h1>${titles[page]}</h1><div class="subtitle">${sub}</div></div><div class="actions">${actions}</div></div>`;
 }
@@ -421,7 +427,7 @@ function startPage() {
   return (
     heading() +
     notices() +
-    `<div class="grid-two"><section class="panel prose"><h2>1. Prepare the gateway</h2><p>Requires Node.js 24+ and Linux or macOS. Run these commands in this repository.</p><pre>npm ci\nnpm run setup\nnpm run engine</pre><p>Setup downloads CLIProxyAPI v8.0.23, verifies its checksum, and creates private local configuration. Run the console in a second terminal.</p><pre>npm start</pre><p>Open <code>http://127.0.0.1:8318</code>, or use your tailnet URL from another device. The dashboard opens directly without a console key.</p><h2>2. Connect your accounts</h2><p>Open Connect account, complete OAuth, then refresh quotas. You can also import existing CLIProxyAPI credential files. Codex credentials can enable upstream WebSockets by adding <code>"websockets": true</code> to their engine credential JSON.</p><a class="button small" href="#connect">Connect account</a></section><section class="panel prose"><h2>3. Point your coding clients here</h2><p>Use your <code>PROXY_API_KEY</code> from <code>.env</code> as the client key. Keep it separate from the engine management key.</p><p>Claude Code base URL</p><pre>ANTHROPIC_BASE_URL=${esc(gatewayOrigin)}\nANTHROPIC_AUTH_TOKEN=&lt;PROXY_API_KEY&gt;</pre><p>OpenAI-compatible / Codex provider base URL</p><pre>${esc(gatewayOrigin)}/v1</pre><p>Set the provider to the Responses wire API in Codex. Use a model ID available from <code>/v1/models</code>. The gateway forwards HTTP streaming and WebSocket upgrades at <code>/v1/responses</code>.</p><h2>4. Reach it over your tailnet</h2><p>Keep the engine and console on one always-on machine. Bind both to loopback and expose the console at a dedicated path on your Tailscale HTTPS address.</p><pre>tailscale serve --bg --https=443 --set-path=/cli-proxy/ http://127.0.0.1:8318</pre><p>Open the returned address with its trailing slash: <code>/cli-proxy/</code>. The existing T3 root and <code>/pages</code> routes stay available. Tailscale controls dashboard access. Coding clients still need the gateway API key.</p></section></div><section class="panel prose"><h2>How this relates to the video</h2><p>The proxy-specific features are implemented here: a consolidated quota view, reset-first priorities, account affinity, one gateway endpoint, and a loopback-first deployment. CLIProxyAPI owns OAuth refresh, model translation, inference, cooldowns, and provider WebSockets. The rest of the video covers agent workflows and machine management, which are outside this proxy.</p><p><a class="inline-link" href="https://www.youtube.com/watch?v=D8PikZ1KhUo" target="_blank" rel="noreferrer">Theo’s video</a> · <a class="inline-link" href="https://github.com/router-for-me/CLIProxyAPI" target="_blank" rel="noreferrer">CLIProxyAPI</a></p></section>`
+    `<div class="grid-two"><section class="panel prose"><h2>1. Prepare the gateway</h2><p>Requires Node.js 24+ and Linux or macOS. Run these commands in this repository.</p><pre>npm ci\nnpm run setup\nnpm run engine</pre><p>Setup downloads CLIProxyAPI v8.0.59, verifies its checksum, and creates private local configuration. Run the console in a second terminal.</p><pre>npm start</pre><p>Open <code>http://127.0.0.1:8318</code>, or use your tailnet URL from another device. The dashboard opens directly without a console key.</p><h2>2. Connect your accounts</h2><p>Open Connect account, complete OAuth, then refresh quotas. You can also import existing CLIProxyAPI credential files. Codex credentials can enable upstream WebSockets by adding <code>"websockets": true</code> to their engine credential JSON.</p><a class="button small" href="#connect">Connect account</a></section><section class="panel prose"><h2>3. Point your coding clients here</h2><p>Use your <code>PROXY_API_KEY</code> from <code>.env</code> as the client key. Keep it separate from the engine management key.</p><p>Claude Code base URL</p><pre>ANTHROPIC_BASE_URL=${esc(gatewayOrigin)}\nANTHROPIC_AUTH_TOKEN=&lt;PROXY_API_KEY&gt;</pre><p>OpenAI-compatible / Codex provider base URL</p><pre>${esc(gatewayOrigin)}/v1</pre><p>Set the provider to the Responses wire API in Codex. Use a model ID available from <code>/v1/models</code>. The gateway forwards HTTP streaming and WebSocket upgrades at <code>/v1/responses</code>.</p><h2>4. Reach it over your tailnet</h2><p>Keep the engine and console on one always-on machine. Bind both to loopback and expose the console at a dedicated path on your Tailscale HTTPS address.</p><pre>tailscale serve --bg --https=443 --set-path=/cli-proxy/ http://127.0.0.1:8318</pre><p>Open the returned address with its trailing slash: <code>/cli-proxy/</code>. The existing T3 root and <code>/pages</code> routes stay available. Tailscale controls dashboard access. Coding clients still need the gateway API key.</p></section></div><section class="panel prose"><h2>How this relates to the video</h2><p>The proxy-specific features are implemented here: a consolidated quota view, reset-first priorities, account affinity, one gateway endpoint, and a loopback-first deployment. CLIProxyAPI owns OAuth refresh, model translation, inference, cooldowns, and provider WebSockets. The rest of the video covers agent workflows and machine management, which are outside this proxy.</p><p><a class="inline-link" href="https://www.youtube.com/watch?v=D8PikZ1KhUo" target="_blank" rel="noreferrer">Theo’s video</a> · <a class="inline-link" href="https://github.com/router-for-me/CLIProxyAPI" target="_blank" rel="noreferrer">CLIProxyAPI</a></p></section>`
   );
 }
 function render() {
@@ -454,10 +460,45 @@ function render() {
       routing: routingPage,
       logs: logsPage,
       start: startPage,
+      usage: () =>
+        usagePage(
+          usageReport,
+          usageError,
+          { esc, mark, pName, mask, heading },
+          usageView,
+          gatewayOrigin,
+        ),
     } as Record<string, () => string>
   )[page]();
 }
 const runtime = ManagedRuntime.make(Layer.empty);
+let usageReport: Report | null = null;
+let usageError: string | null = null;
+const loadUsage = Effect.suspend(() =>
+  api(`usage${usageQuery()}`, JsonObject).pipe(
+    Effect.tap((data) =>
+      Effect.sync(() => {
+        usageReport = data as unknown as Report;
+        usageError = null;
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        usageError = message(error);
+      }),
+    ),
+    Effect.andThen(
+      Effect.sync(() => {
+        if (page === "usage") render();
+      }),
+    ),
+  ),
+);
+const usageMutation = (path: string, body: unknown, done: string) =>
+  api(path, JsonObject, { method: "POST", body }).pipe(
+    Effect.tap(() => Effect.sync(() => toast(done))),
+    Effect.andThen(loadUsage),
+  );
 let toastFiber: Fiber.Fiber<void> | undefined;
 let oauthFiber: Fiber.Fiber<void> | undefined;
 const runEvent = (effect: Effect.Effect<unknown, unknown>) =>
@@ -470,6 +511,7 @@ window.addEventListener("hashchange", () => {
   page = location.hash.slice(1) || "quota";
   document.body.classList.remove("menu-open");
   render();
+  if (page === "usage") runEvent(loadUsage);
 });
 $("#menu").addEventListener("click", () =>
   document.body.classList.toggle("menu-open"),
@@ -538,6 +580,58 @@ main.addEventListener("click", (e) =>
       if (filterButton) {
         filter = filterButton.dataset.filter || "all";
         render();
+        return;
+      }
+      const usageProvider = target.closest<HTMLElement>(
+        "[data-usage-provider]",
+      );
+      if (usageProvider) {
+        usageView.provider = usageProvider.dataset.usageProvider || "all";
+        usageView.account = usageView.model = "";
+        yield* loadUsage;
+        return;
+      }
+      const usageBreakdown = target.closest<HTMLElement>(
+        "[data-usage-breakdown]",
+      );
+      if (usageBreakdown) {
+        usageView.breakdown = usageBreakdown.dataset
+          .usageBreakdown as UsageView["breakdown"];
+        render();
+        return;
+      }
+      const usageButton = target.closest<HTMLElement>("[data-usage-action]");
+      if (usageButton) {
+        const action = usageButton.dataset.usageAction;
+        const id = usageButton.dataset.id;
+        if (action === "reload") yield* loadUsage;
+        if (action === "copy-key" && usageView.newKey) {
+          const key = usageView.newKey.key;
+          yield* Effect.tryPromise(() => navigator.clipboard.writeText(key));
+          toast("Device key copied");
+        }
+        if (
+          action === "revoke" &&
+          id &&
+          confirm("Revoke this device key? Clients using it will be refused.")
+        )
+          yield* usageMutation("devices/revoke", { id }, "Device key revoked");
+        if (action === "delete-billing" && id)
+          yield* usageMutation(
+            "billing/delete",
+            { id: Number(id) },
+            "Billing record deleted",
+          );
+        if (
+          action === "delete-import" &&
+          id &&
+          confirm("Remove this import and all of its records?")
+        )
+          yield* usageMutation(
+            "billing/import/delete",
+            { id: Number(id) },
+            "Import removed",
+          );
         return;
       }
       const button = target.closest<HTMLElement>("[data-action]");
@@ -610,6 +704,18 @@ main.addEventListener("change", (e) =>
   runEvent(
     Effect.gen(function* () {
       const target = e.target as HTMLInputElement;
+      const field = target.dataset?.usageField as keyof UsageView | undefined;
+      if (field && target.type !== "file") {
+        (usageView as unknown as Record<string, string>)[field] = target.value;
+        if (field === "metric") render();
+        else if (
+          usageView.range !== "custom" ||
+          (usageView.from && usageView.to)
+        )
+          yield* loadUsage;
+        else render();
+        return;
+      }
       if (target.id === "layout") {
         layout = target.value;
         render();
@@ -663,6 +769,51 @@ main.addEventListener("submit", (e) =>
   runEvent(
     Effect.gen(function* () {
       const target = e.target as HTMLFormElement;
+      const usageForm = target.dataset?.usageForm;
+      if (usageForm) {
+        e.preventDefault();
+        const data = Object.fromEntries(
+          [...new FormData(target)].filter(
+            ([, v]) => typeof v === "string" && v !== "",
+          ),
+        ) as Record<string, string>;
+        if (usageForm === "device") {
+          const created = yield* api(
+            "devices",
+            Schema.Struct({
+              id: Schema.String,
+              label: Schema.String,
+              key: Schema.String,
+            }),
+            { method: "POST", body: { label: data.label } },
+          );
+          usageView.newKey = created;
+          yield* loadUsage;
+        }
+        if (usageForm === "billing")
+          yield* usageMutation("billing", data, "Billing record added");
+        if (usageForm === "import") {
+          const file = (target.elements.namedItem("file") as HTMLInputElement)
+            .files?.[0];
+          if (!file) return;
+          if (file.size > 1024 * 1024)
+            return yield* new DashboardError({
+              message: "Billing files must be smaller than 1 MB",
+            });
+          const csv = yield* Effect.tryPromise(() => file.text());
+          yield* usageMutation(
+            "billing/import",
+            {
+              name: file.name.slice(0, 120),
+              coverageStart: data.coverageStart,
+              coverageEnd: data.coverageEnd,
+              csv,
+            },
+            "Billing records imported",
+          );
+        }
+        return;
+      }
       if (target.id !== "callback-form") return;
       e.preventDefault();
       yield* api("oauth/callback", JsonObject, {
@@ -676,6 +827,27 @@ main.addEventListener("submit", (e) =>
     }),
   ),
 );
+// One tooltip for the trend chart; bars and their wider hit areas share it.
+const showTip = (e: Event) => {
+  const day = (e.target as Element).closest<SVGGElement>(".trend-day");
+  const tip = main.querySelector<HTMLElement>(".chart-tip");
+  if (!tip) return;
+  if (!day) {
+    tip.hidden = true;
+    return;
+  }
+  const wrap = tip.parentElement!.getBoundingClientRect();
+  const box = day.getBoundingClientRect();
+  tip.textContent = day.dataset.tip || "";
+  tip.hidden = false;
+  tip.style.left = `${Math.min(Math.max(box.left - wrap.left + box.width / 2, 80), wrap.width - 80)}px`;
+};
+main.addEventListener("mouseover", showTip);
+main.addEventListener("focusin", showTip);
+main.addEventListener("mouseleave", () => {
+  const tip = main.querySelector<HTMLElement>(".chart-tip");
+  if (tip) tip.hidden = true;
+});
 const initialState = $("#initial-state")?.textContent;
 await runtime.runPromise(
   initialState
@@ -698,12 +870,15 @@ runtime.runFork(
       Effect.suspend(() =>
         !busy &&
         !["INPUT", "SELECT"].includes(document.activeElement?.tagName || "")
-          ? load(["quota", "overview", "logs", "routing"].includes(page))
+          ? load(["quota", "overview", "logs", "routing"].includes(page)).pipe(
+              Effect.andThen(page === "usage" ? loadUsage : Effect.void),
+            )
           : Effect.void,
       ).pipe(Effect.repeat(Schedule.spaced(15000))),
     ),
   ),
 );
+if (page === "usage") runtime.runFork(loadUsage);
 window.addEventListener("pagehide", (e) =>
   e.persisted ? undefined : runtime.dispose(),
 );

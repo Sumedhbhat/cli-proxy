@@ -12,6 +12,8 @@ export const command = Effect.fn("Command.run")(function* (
     readonly cwd?: string;
     readonly capture?: boolean;
     readonly quiet?: boolean;
+    // Added to the inherited environment.
+    readonly env?: Record<string, string>;
   } = {},
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -20,6 +22,7 @@ export const command = Effect.fn("Command.run")(function* (
       const handle = yield* spawner.spawn(
         ChildProcess.make(binary, args, {
           cwd: options.cwd,
+          ...(options.env ? { env: options.env, extendEnv: true } : {}),
           stdin: "inherit",
           stdout: options.capture
             ? "pipe"

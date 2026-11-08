@@ -18,6 +18,10 @@ import {
   validOrigin,
 } from "./http.ts";
 import { InputError, JsonObject, record } from "./domain.ts";
+import { LedgerLive } from "./ledger.ts";
+import { IngestLive, ingestLoop } from "./ingest.ts";
+import { DevicesLive } from "./devices.ts";
+import { makeUsageApi } from "./usage-api.ts";
 
 const RefreshInput = Schema.Struct({ id: Schema.optional(Schema.String) });
 const SettingsInput = Schema.Struct({ scheduler: Schema.Boolean });
@@ -41,6 +45,7 @@ export const serve = Effect.gen(function* () {
   const app = yield* Application;
   const engine = yield* Engine;
   const gateway = yield* makeGateway;
+  const usageApi = yield* makeUsageApi;
   const { assets, indexHTML } = yield* loadAssets;
   const run = yield* FiberSet.makeRuntime<never, void, never>();
   const route = Effect.fn("HTTP.route")(function* (
@@ -70,6 +75,7 @@ export const serve = Effect.gen(function* () {
           status: 403,
           message: "Cross-origin request rejected",
         });
+      if (yield* usageApi.handle(req, res, url)) return;
       if (path === "/api/state" && req.method === "GET") {
         json(res, 200, yield* app.snapshot);
         return;
@@ -320,11 +326,17 @@ export const serve = Effect.gen(function* () {
       ),
       Effect.forkScoped,
     );
+  // Ingestion runs in the server scope: shutdown interrupts it between commits.
+  if (!config.demo) yield* ingestLoop.pipe(Effect.forkScoped);
   yield* Effect.never;
 });
 const infrastructure = Layer.mergeAll(ConfigLive, NodeServices.layer);
-const services = Layer.mergeAll(EngineLive, StorageLive).pipe(
+const services = Layer.mergeAll(EngineLive, StorageLive, LedgerLive).pipe(
   Layer.provideMerge(infrastructure),
 );
-export const Live = ApplicationLive.pipe(Layer.provideMerge(services));
+export const Live = Layer.mergeAll(
+  ApplicationLive,
+  IngestLive,
+  DevicesLive,
+).pipe(Layer.provideMerge(services));
 NodeRuntime.runMain(serve.pipe(Effect.scoped, Effect.provide(Live)));
