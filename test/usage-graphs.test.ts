@@ -57,3 +57,88 @@ test("usage starts with three charts and exposes conversation distribution and c
   assert.match(tasks, /excluded from task statistics/);
   assert.doesNotMatch(tasks, /NaN|Infinity/);
 });
+
+test("project overview groups the long tail without losing projects or treating unpriced usage as free", () => {
+  const activity = [50, 20, 10, 8, 7, 3, 2].map((n, i) => ({
+    id: String(i),
+    project: "Project " + i,
+    task: "t" + i,
+    estimatedUsd: i === 6 ? null : n,
+    group: {
+      day: "2026-11-08",
+      provider: "codex",
+      model: "test",
+      tier: "standard",
+      context: "standard" as const,
+      usageStatus: "estimated" as const,
+      account: null,
+      device: null,
+      principal: "t3-cache",
+      classified: true,
+      outcome: "unknown",
+      executions: 1,
+      tokens: {
+        inputUncached: n,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 0,
+        reasoning: 0,
+        total: n,
+      },
+    },
+  }));
+  const output = projectGraphs({ ...report, activity }, helpers);
+  const overview = output
+    .split('<section class="panel project-overview">')[1]
+    .split('<div class="analytics-grid">')[0];
+  assert.ok(!overview.includes("metric-track"));
+  assert.match(overview, /Other projects/);
+  const others = overview.split('data-usage-detail="other-projects"')[1];
+  assert.match(others, /Project 5/);
+  assert.match(others, /Project 6/);
+  assert.doesNotMatch(others, /Project 0/);
+  assert.match(overview, /Average \/ project/);
+  const values = projectGraphs({ ...report, activity }, helpers, {
+    projectMetric: "value",
+  });
+  assert.match(values, /Unpriced/);
+});
+test("quota charts do not join unknown-account snapshots or bridge recording gaps", () => {
+  const at = (m: number) =>
+    new Date(Date.parse("2026-11-08T00:00:00Z") + m * 60000).toISOString();
+  const samples = [0, 5, 30].map((m, i) => ({
+    provider: "codex",
+    account: "unknown",
+    window: "weekly",
+    at: at(m),
+    remaining: 90 - i * 10,
+    resetsAt: at(10000),
+    source: "native-cli" as const,
+  }));
+  const chart = topGraphs(
+    { ...report, quotaHistory: samples },
+    helpers,
+    usageView,
+  );
+  const paths = [...chart.matchAll(/<path d="([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(paths.every((p) => !p.includes("L")));
+  const live = topGraphs(
+    {
+      ...report,
+      quotaHistory: samples.map((s) => ({ ...s, source: "provider" as const })),
+    },
+    helpers,
+    usageView,
+  );
+  const line = [...live.matchAll(/<path d="([^"]*)"/g)][0][1];
+  assert.equal((line.match(/L/g) || []).length, 1);
+  assert.equal((line.match(/M/g) || []).length, 2);
+  assert.match(
+    topGraphs(
+      { ...report, quotaRefreshErrors: { claude: 1 } },
+      helpers,
+      usageView,
+    ),
+    /Refresh unavailable/,
+  );
+});

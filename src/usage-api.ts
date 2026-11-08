@@ -1,4 +1,5 @@
 // Dashboard API for usage, devices, and billing records.
+import { Application } from "./application.ts";
 import { readHistory } from "./quota-history.ts";
 import { Effect, Ref, Schema } from "effect";
 import { createHash } from "node:crypto";
@@ -154,6 +155,7 @@ export const exportRow = (row: Record<string, unknown>) => {
 
 export const makeUsageApi = Effect.gen(function* () {
   const config = yield* AppConfig;
+  const app = yield* Application;
   const ledger = yield* Ledger;
   const ingest = yield* Ingest;
   const devices = yield* Devices;
@@ -214,7 +216,16 @@ export const makeUsageApi = Effect.gen(function* () {
                 (!cutoff || g.day < cutoff) &&
                 (!filter.model || g.model === filter.model),
             );
+      const snapshot = yield* app.snapshot;
       return {
+        quotaRefreshErrors: Object.fromEntries(
+          ["claude", "codex"].map((provider) => [
+            provider,
+            snapshot.accounts.filter(
+              (a) => a.provider === provider && !a.disabled && a.quotaError,
+            ).length,
+          ]),
+        ),
         quotaHistory: history.quota,
         activity:
           filter.account || filter.device

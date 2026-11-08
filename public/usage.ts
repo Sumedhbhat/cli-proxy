@@ -8,6 +8,7 @@ import type { Totals, UsageReport } from "../src/usage-report.ts";
 type Row = Record<string, unknown>;
 export interface Report extends UsageReport {
   readonly quotaHistory?: QuotaSample[];
+  readonly quotaRefreshErrors?: Record<string, number>;
   readonly activity?: NativeUsage[];
   readonly generatedAt: string;
   readonly coverage: {
@@ -55,6 +56,7 @@ export interface UsageView {
   model: string;
   breakdown: "accounts" | "devices" | "models";
   metric: "tokens" | "value";
+  projectMetric: "tokens" | "value" | "tasks";
   newKey: { id: string; label: string; key: string } | null;
 }
 
@@ -68,6 +70,7 @@ export const usageView: UsageView = {
   model: "",
   breakdown: "devices",
   metric: "value",
+  projectMetric: "tokens",
   newKey: null,
 };
 
@@ -200,18 +203,15 @@ function figures(report: Report) {
   const pricedShare = t.executions ? estimated.priced + estimated.partial : 0;
   return `<div class="usage-figures">
     <article class="panel figure"><h2>Observed tokens</h2><div class="metric">${tokens(t.tokens.total)}</div>
-      <p>Reported by Claude and Codex for ${whole.format(t.executions)} executions through this gateway.</p>
       <div class="field-row"><span>Input (uncached)</span><span>${tokens(t.tokens.inputUncached)}</span></div>
       <div class="field-row"><span>Cache reads</span><span>${tokens(t.tokens.cacheRead)}</span></div>
       <div class="field-row"><span>Cache writes</span><span>${tokens(t.tokens.cacheWrite)}</span></div>
       <div class="field-row"><span>Output <small>incl. ${tokens(t.tokens.reasoning)} reasoning</small></span><span>${tokens(t.tokens.output)}</span></div>
       <div class="field-row"><span>Incomplete records</span><span class="${incomplete(t) ? "warn" : ""}">${whole.format(t.status.partial)} partial · ${whole.format(t.status.unknown)} unknown</span></div></article>
     <article class="panel figure"><h2>API-equivalent value <span class="tag">Estimate</span></h2><div class="metric">${range(t.estimate.low, t.estimate.high)}</div>
-      <p>What these tokens would cost at public API list prices. Subscription usage is <strong>not</strong> billed per token; this is not a charge.</p>
       <div class="field-row"><span>Executions priced</span><span>${whole.format(pricedShare)} of ${whole.format(t.executions)}</span></div>
       <div class="field-row"><span>No price available</span><span class="${t.estimate.unpricedTokens ? "warn" : ""}">${tokens(t.estimate.unpricedTokens)} tokens</span></div>
-      <div class="field-row"><span>No usage reported</span><span>${whole.format(estimated["no-usage"])} ${estimated["no-usage"] === 1 ? "execution" : "executions"}</span></div>
-      <p class="fine">The range covers cache writes priced at the shortest and longest published cache duration; the engine does not report which was used.</p></article>
+      <div class="field-row"><span>No usage reported</span><span>${whole.format(estimated["no-usage"])} ${estimated["no-usage"] === 1 ? "execution" : "executions"}</span></div></article>
     <article class="panel figure"><h2>Actual spending <span class="tag">Billing records</span></h2>
       ${
         spend.length
@@ -228,9 +228,8 @@ function figures(report: Report) {
           <div class="field-row"><span>Paid from credits <small>not added again</small></span><span>${money(v.credit_consumption, currency)}</span></div>`,
               )
               .join("")
-          : '<div class="metric faint">—</div><p>No billing records overlap this range. Add plan fees or import invoices below; money is never inferred from tokens.</p>'
-      }
-      <p class="fine">Spending is per account and period, not per device. Splitting a plan fee across devices by tokens would be an allocation, not a measurement.</p></article>
+          : '<div class="metric faint">—</div><span class="fine">No billing records</span>'
+      }</article>
   </div>`;
 }
 
@@ -490,7 +489,7 @@ export function usagePage(
       : figures(report) +
         providerCards(report, h) +
         breakdownTable(report, h, view)) +
-    projectGraphs(report, h) +
+    projectGraphs(report, h, view) +
     `<div class="grid-two">${coveragePanel(report, h)}${pricingPanel(report, h)}</div>` +
     `<div class="grid-two">${devicesPanel(report, h, view, gateway)}${billingPanel(report, h)}</div>` +
     explainer

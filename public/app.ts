@@ -453,6 +453,15 @@ function render() {
   document
     .querySelectorAll<HTMLElement>("nav a")
     .forEach((a) => a.classList.toggle("active", a.dataset.page === page));
+  const usageDetails = new Map(
+    page === "usage"
+      ? [
+          ...main.querySelectorAll<HTMLDetailsElement>(
+            "details[data-usage-detail]",
+          ),
+        ].map((el) => [el.dataset.usageDetail, el.open])
+      : [],
+  );
   main.innerHTML = (
     {
       quota: quotaPage,
@@ -472,6 +481,14 @@ function render() {
         ),
     } as Record<string, () => string>
   )[page]();
+  if (page === "usage") {
+    main
+      .querySelectorAll<HTMLDetailsElement>("details[data-usage-detail]")
+      .forEach((el) => {
+        if (usageDetails.has(el.dataset.usageDetail))
+          el.open = usageDetails.get(el.dataset.usageDetail)!;
+      });
+  }
   if (page === "usage")
     main.querySelectorAll<HTMLTableElement>(".usage-table").forEach((table) => {
       const labels = [...table.querySelectorAll("thead th")].map(
@@ -720,7 +737,7 @@ main.addEventListener("change", (e) =>
       const field = target.dataset?.usageField as keyof UsageView | undefined;
       if (field && target.type !== "file") {
         (usageView as unknown as Record<string, string>)[field] = target.value;
-        if (field === "metric") render();
+        if (field === "metric" || field === "projectMetric") render();
         else if (
           usageView.range !== "custom" ||
           (usageView.from && usageView.to)

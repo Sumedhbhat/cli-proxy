@@ -19,7 +19,12 @@ const stamp = (s: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
-function quotaGraph(provider: string, all: QuotaSample[], h: Helpers) {
+function quotaGraph(
+  provider: string,
+  all: QuotaSample[],
+  h: Helpers,
+  refreshErrors = 0,
+) {
   const samples = all
     .filter((s) => s.provider === provider)
     .sort((a, b) => a.at.localeCompare(b.at));
@@ -46,11 +51,13 @@ function quotaGraph(provider: string, all: QuotaSample[], h: Helpers) {
       points.forEach((p, j) => {
         const last = points[j - 1];
         const gap =
-          !last || Date.parse(p.at) - Date.parse(last.at) > 6 * 3600000;
+          !last ||
+          p.source === "native-cli" ||
+          Date.parse(p.at) - Date.parse(last.at) > 15 * 60000;
         path += `${gap ? "M" : "L"}${x(p.at).toFixed(1)},${y(p.remaining).toFixed(1)} `;
       });
       return (
-        `<path d="${path}" fill="none" stroke="var(--series-${provider})" stroke-width="2.3" opacity="${Math.max(0.4, 1 - i * 0.12)}" ${points[0]?.source === "native-cli" ? 'stroke-dasharray="5 4"' : ""}/>` +
+        `<path d="${path}" fill="none" stroke="var(--series-${provider})" stroke-width="2.3" opacity="${Math.max(0.4, 1 - i * 0.12)}"/>` +
         points
           .map(
             (p) =>
@@ -68,18 +75,21 @@ function quotaGraph(provider: string, all: QuotaSample[], h: Helpers) {
       .find(
         (p) =>
           latest &&
-          p.resetsAt === latest.resetsAt &&
+          p.resetsAt !== null &&
+          latest.resetsAt !== null &&
+          Math.abs(Date.parse(p.resetsAt) - Date.parse(latest.resetsAt)) <
+            60000 &&
           Date.parse(latest.at) - Date.parse(p.at) >= 15 * 60000,
       );
   const rate =
-    latest && prev
+    latest && latest.source === "provider" && prev
       ? Math.max(
           0,
           (prev.remaining - latest.remaining) /
             ((Date.parse(latest.at) - Date.parse(prev.at)) / 3600000),
         )
       : null;
-  return `<section class="panel quota-graph"><h2>${name} weekly limit</h2><div class="graph-number">${latest ? latest.remaining.toFixed(1) + "%" : "—"}<small>remaining</small></div><p class="graph-caption">${rate === null ? "Collecting burn rate" : rate.toFixed(1) + " percentage points / hour"}${latest?.resetsAt ? " · resets " + h.esc(stamp(latest.resetsAt)) : ""}</p><div class="chart-wrap"><svg viewBox="0 0 360 205" role="img" aria-label="${name} weekly quota remaining over time">${[0, 50, 100].map((v) => `<line class="grid" x1="42" x2="342" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="35" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("")}${lines}<text class="axis" x="42" y="199">${h.esc(stamp(new Date(start).toISOString()))}</text><text class="axis" x="342" y="199" text-anchor="end">Now</text></svg><div class="chart-tip" hidden></div>${!samples.length ? '<p class="chart-empty">No retained quota snapshots for this range. New observations are collected automatically.</p>' : ""}</div><details><summary>Quota history</summary><p class="fine">Provider observations, per account/window. Resets rise back toward 100% when reported. Gaps are missing observations. Dashed lines are recovered CLI snapshots with unknown account identity.</p>${latest ? `<p class="fine">Last observed ${h.esc(stamp(latest.at))}</p>` : ""}</details></section>`;
+  return `<section class="panel quota-graph"><h2>${name} weekly limit</h2><div class="graph-number">${latest ? latest.remaining.toFixed(1) + "%" : "—"}<small>remaining</small></div><p class="graph-caption">${rate === null ? "Collecting burn rate" : rate.toFixed(1) + " percentage points / hour"}${latest?.resetsAt ? " · resets " + h.esc(stamp(latest.resetsAt)) : ""}</p><p class="graph-coverage">${refreshErrors ? "Refresh unavailable · showing saved data" : latest && samples.every((p) => p.remaining === 0) ? "Earlier depletion not recorded" : ""}</p><div class="chart-wrap"><svg viewBox="0 0 360 205" role="img" aria-label="${name} weekly quota remaining over time">${[0, 50, 100].map((v) => `<line class="grid" x1="42" x2="342" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="35" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("")}${lines}<text class="axis" x="42" y="199">${h.esc(stamp(new Date(start).toISOString()))}</text><text class="axis" x="342" y="199" text-anchor="end">Now</text></svg><div class="chart-tip" hidden></div>${!samples.length ? '<p class="chart-empty">No retained quota snapshots for this range. New observations are collected automatically.</p>' : ""}</div><details data-usage-detail="quota-${provider}"><summary>Quota history</summary><p class="fine">${samples.length} observations${samples.length ? " · history begins " + h.esc(stamp(samples[0].at)) : ""}. ${refreshErrors ? "Quota refresh failed for " + refreshErrors + " account(s). " : ""}${samples.length && samples.every((p) => p.remaining === 0) ? "All saved observations in this range are at 0%. Earlier depletion cannot be reconstructed from tokens." : ""}</p><p class="fine">Provider observations, per account/window. Resets rise back toward 100% when reported. Gaps are missing observations. Recovered CLI snapshots are isolated points because account identity is unknown. Lines connect identified-account observations at most 15 minutes apart.</p>${latest ? `<p class="fine">Last observed ${h.esc(stamp(latest.at))}</p>` : ""}</details></section>`;
 }
 function dailyGraph(report: Report, h: Helpers, view: UsageView) {
   const days = new Map<
@@ -103,19 +113,17 @@ function dailyGraph(report: Report, h: Helpers, view: UsageView) {
   const list = [...days].sort(([a], [b]) => a.localeCompare(b));
   const tokens = view.metric === "tokens";
   const max = Math.max(
-      1,
-      ...list.map(([, d]) => (tokens ? d.tokens : d.value)),
-    ),
-    step = 300 / Math.max(1, list.length);
-  return `<section class="panel"><h2>Daily ${tokens ? "tokens" : "usage value"}</h2><p class="graph-caption">${tokens ? "Reported tokens" : "API-equivalent estimate · USD"}</p><div class="chart-wrap"><svg viewBox="0 0 360 235" role="img" aria-label="Daily ${tokens ? "tokens" : "API-equivalent value"}">${[0, 0.5, 1].map((f) => `<line class="grid" x1="44" x2="344" y1="${190 - f * 156}" y2="${190 - f * 156}"/><text class="axis" x="37" y="${194 - f * 156}" text-anchor="end">${tokens ? compact.format(max * f) : usd(max * f)}</text>`).join("")}${list
+    1,
+    ...list.map(([, d]) => (tokens ? d.tokens : d.value)),
+  );
+  return `<section class="panel daily-usage"><h2>Daily ${tokens ? "tokens" : "usage value"}</h2><div class="chart-wrap"><div class="daily-plot" role="img" aria-label="Daily ${tokens ? "tokens" : "API-equivalent value in USD"}"><div class="daily-axis">${[0, 0.5, 1].map((f) => `<span style="bottom:${f * 100}%">${tokens ? compact.format(max * f) : usd(max * f)}</span>`).join("")}</div><div class="daily-columns" style="grid-template-columns:repeat(${Math.max(1, list.length)},minmax(0,1fr))">${list
     .map(([day, d], i) => {
       const value = tokens ? d.tokens : d.value;
-      const height = (value / max) * 156;
-      return `<g class="trend-day" tabindex="0" data-tip="${h.esc(day + " · " + (tokens ? whole.format(value) + " tokens" : usd(value)) + (d.unpriced ? " · " + d.unpriced + " unpriced observations" : ""))}"><rect class="hit" x="${44 + i * step}" y="34" width="${step}" height="156"/><rect x="${45 + i * step}" y="${190 - height}" width="${Math.max(1, step - 2)}" height="${height}" rx="2" fill="var(--green)"/>${i % Math.ceil(list.length / 4) === 0 ? `<text class="axis" x="${44 + i * step}" y="211">${day.slice(5)}</text>` : ""}</g>`;
+      return `<div class="daily-day trend-day" tabindex="0" data-tip="${h.esc(day + " · " + (tokens ? whole.format(value) + " tokens" : usd(value)) + (d.unpriced ? " · " + d.unpriced + " unpriced observations" : ""))}"><i style="height:${(100 * value) / max}%"></i>${i % Math.max(1, Math.ceil(list.length / 4)) === 0 && i < list.length - 1 ? `<span class="daily-date">${day.slice(5)}</span>` : ""}${i === list.length - 1 ? `<span class="daily-date last">${day.slice(5)}</span>` : ""}</div>`;
     })
     .join(
       "",
-    )}</svg><div class="chart-tip" hidden></div></div><select data-usage-field="metric" aria-label="Daily chart measure"><option value="value" ${!tokens ? "selected" : ""}>API-equivalent value</option><option value="tokens" ${tokens ? "selected" : ""}>Tokens</option></select><details><summary>Sources and gaps</summary><p class="fine">Recovered T3 usage is valued using its retained rate snapshot or reported cost, not a subscription bill. Missing rates are unpriced, not free. Gateway estimates use the dated catalog. Days without observations are gaps.</p></details></section>`;
+    )}</div></div><div class="chart-tip" hidden></div></div><select data-usage-field="metric" aria-label="Daily chart measure"><option value="value" ${!tokens ? "selected" : ""}>API-equivalent value</option><option value="tokens" ${tokens ? "selected" : ""}>Tokens</option></select><details data-usage-detail="daily-sources"><summary>Sources and gaps</summary><p class="fine">Recovered T3 usage uses retained rates or reported costs, not subscription charges. Missing rates are unpriced. Dates use UTC.</p></details></section>`;
 }
 function bars(
   title: string,
@@ -165,34 +173,89 @@ function distribution(activity: NonNullable<Report["activity"]>, h: Helpers) {
     )
     .join(
       "",
-    )}</div><div class="chart-wrap"><svg viewBox="0 0 600 190" role="img" aria-label="Distribution of tokens per T3 conversation">${bins.map((b, i) => `<g class="trend-day" tabindex="0" data-tip="${h.esc(whole.format(b.from) + "–" + whole.format(b.to) + " tokens · " + b.count + " conversations")}"><rect class="hit" x="${24 + i * 70}" y="12" width="66" height="145"/><rect x="${25 + i * 70}" y="${157 - (b.count / max) * 135}" width="62" height="${(b.count / max) * 135}" fill="var(--blue)" rx="3"/><text class="axis" x="${55 + i * 70}" y="177" text-anchor="middle">${compact.format(b.from)}</text><text class="axis" x="${55 + i * 70}" y="${149 - (b.count / max) * 135}" text-anchor="middle">${b.count || ""}</text></g>`).join("")}</svg><div class="chart-tip" hidden></div></div><details><summary>Statistics and coverage</summary><p class="fine">${s.count} mapped T3 conversations within the selected range. Population variance: ${whole.format(s.variance)} tokens². Standard deviation measures spread around the average. ${a.unassigned} usage observations could not be mapped to a T3 conversation and are excluded from task statistics. A conversation can be partial at range boundaries.</p></details></section>`;
+    )}</div><div class="chart-wrap"><svg viewBox="0 0 600 190" role="img" aria-label="Distribution of tokens per T3 conversation">${bins.map((b, i) => `<g class="trend-day" tabindex="0" data-tip="${h.esc(whole.format(b.from) + "–" + whole.format(b.to) + " tokens · " + b.count + " conversations")}"><rect class="hit" x="${24 + i * 70}" y="12" width="66" height="145"/><rect x="${25 + i * 70}" y="${157 - (b.count / max) * 135}" width="62" height="${(b.count / max) * 135}" fill="var(--blue)" rx="3"/><text class="axis" x="${55 + i * 70}" y="177" text-anchor="middle">${compact.format(b.from)}</text><text class="axis" x="${55 + i * 70}" y="${149 - (b.count / max) * 135}" text-anchor="middle">${b.count || ""}</text></g>`).join("")}</svg><div class="chart-tip" hidden></div></div><details data-usage-detail="task-coverage"><summary>Statistics and coverage</summary><p class="fine">${s.count} mapped T3 conversations within the selected range. Population variance: ${whole.format(s.variance)} tokens². Standard deviation measures spread around the average. ${a.unassigned} usage observations could not be mapped to a T3 conversation and are excluded from task statistics. A conversation can be partial at range boundaries.</p></details></section>`;
 }
 export function topGraphs(report: Report, h: Helpers, view: UsageView) {
-  return `<div class="usage-graphs">${quotaGraph("claude", report.quotaHistory || [], h)}${quotaGraph("codex", report.quotaHistory || [], h)}${dailyGraph(report, h, view)}</div>`;
+  return `<div class="usage-graphs">${quotaGraph("claude", report.quotaHistory || [], h, report.quotaRefreshErrors?.claude)}${quotaGraph("codex", report.quotaHistory || [], h, report.quotaRefreshErrors?.codex)}${dailyGraph(report, h, view)}</div>`;
 }
-export function projectGraphs(report: Report, h: Helpers) {
+function projectOverview(
+  a: ReturnType<typeof taskAnalytics>,
+  h: Helpers,
+  metric: UsageView["projectMetric"],
+) {
+  const value = (p: (typeof a.projects)[number]) =>
+    metric === "value" ? p.value : metric === "tasks" ? p.tasks : p.tokens;
+  const format = metric === "value" ? usd : (n: number) => compact.format(n);
+  const sorted = [...a.projects].sort((p, q) => value(q) - value(p));
+  const total = sorted.reduce((n, p) => n + value(p), 0);
+  const mean = sorted.length ? total / sorted.length : 0;
+  const deviation = sorted.length
+    ? Math.sqrt(
+        sorted.reduce((n, p) => n + (value(p) - mean) ** 2, 0) / sorted.length,
+      )
+    : 0;
+  const major = sorted.filter(
+    (p, i) => i < 5 && total > 0 && value(p) / total >= 0.05,
+  );
+  const others = sorted.filter((p) => !major.includes(p));
+  const otherTotal = others.reduce((n, p) => n + value(p), 0);
+  const slices = [
+    ...major.map((p) => ({ name: p.name, value: value(p) })),
+    ...(otherTotal > 0 ? [{ name: "Other projects", value: otherTotal }] : []),
+  ];
+  const colors = [
+    "var(--green)",
+    "var(--blue)",
+    "var(--series-claude)",
+    "var(--yellow)",
+    "var(--series-codex)",
+    "var(--faint)",
+  ];
+  let offset = 0;
+  const rings = slices
+    .map((p, i) => {
+      const length = total ? (p.value / total) * 100 : 0;
+      const start = offset;
+      offset += length;
+      return `<circle class="trend-day" tabindex="0" data-tip="${h.esc(p.name + " · " + format(p.value) + " · " + length.toFixed(1) + "%")}" cx="100" cy="100" r="78" pathLength="100" fill="none" stroke="${colors[i]}" stroke-width="22" stroke-dasharray="${length} ${100 - length}" stroke-dashoffset="${-start}" transform="rotate(-90 100 100)"><title>${h.esc(p.name + ": " + format(p.value))}</title></circle>`;
+    })
+    .join("");
+  const unpriced = a.projects.reduce((n, p) => n + p.unpriced, 0);
+  const row = (p: (typeof a.projects)[number], color?: string) =>
+    `<li><span class="project-name">${color ? `<i style="background:${color}"></i>` : ""}${h.esc(p.name)}</span><span>${metric === "value" && !p.value && p.unpriced ? "Unpriced" : format(value(p))}<small>${total ? ((100 * value(p)) / total).toFixed(1) + "%" : ""}${metric === "value" && p.unpriced ? " · incomplete value" : ""}</small></span></li>`;
+  return `<section class="panel project-overview"><div class="project-heading"><h2>Projects</h2><select data-usage-field="projectMetric" aria-label="Project chart measure">${(
+    [
+      ["tokens", "Tokens"],
+      ["value", "API-equivalent value"],
+      ["tasks", "Conversations"],
+    ] as const
+  )
+    .map(
+      ([key, label]) =>
+        `<option value="${key}" ${key === metric ? "selected" : ""}>${label}</option>`,
+    )
+    .join("")}</select></div><div class="task-stats">${[
+    ["Total", format(total)],
+    ["Average / project", format(mean)],
+    ["Highest", format(sorted[0] ? value(sorted[0]) : 0)],
+    ["Std. deviation", format(deviation)],
+  ]
+    .map(
+      ([label, n]) =>
+        `<div><span>${label}</span><strong>${sorted.length ? n : "—"}</strong></div>`,
+    )
+    .join(
+      "",
+    )}</div>${sorted.length ? `<div class="project-mix"><div class="chart-wrap"><svg viewBox="0 0 200 200" role="img" aria-label="Project contribution by ${metric}"><circle cx="100" cy="100" r="78" fill="none" stroke="var(--line)" stroke-width="22"/>${rings}<text class="project-count" x="100" y="100" text-anchor="middle">${sorted.length}</text><text class="axis" x="100" y="120" text-anchor="middle">projects</text></svg><div class="chart-tip" hidden></div></div><div><ul class="project-list">${major.map((p, i) => row(p, colors[i])).join("")}</ul>${others.length ? `<details class="project-others" data-usage-detail="other-projects"><summary>Other projects <span>${others.length} · ${format(otherTotal)}</span></summary><ul class="project-list">${others.map((p) => row(p)).join("")}</ul></details>` : ""}</div></div>` : '<p class="chart-empty">No project observations for these filters.</p>'}${metric === "value" ? `<p class="fine">API-equivalent estimate · ${unpriced ? whole.format(unpriced) + " unpriced observations excluded from value" : "USD"}</p>` : ""}</section>`;
+}
+export function projectGraphs(
+  report: Report,
+  h: Helpers,
+  view: Pick<UsageView, "projectMetric"> = { projectMetric: "tokens" },
+) {
   const activity = report.activity || [],
     a = taskAnalytics(activity);
-  return `<details class="analytics-section" open><summary>Projects & conversations <span class="tag">Read-only T3 history</span></summary>${distribution(activity, h)}<div class="analytics-grid">${bars(
-    "API-equivalent value by project",
-    a.projects.map((p) => ({
-      name: p.name,
-      value: p.value,
-      detail: p.unpriced ? `${p.unpriced} unpriced observations` : undefined,
-    })),
-    usd,
-    h,
-  )}${bars(
-    "Tokens by project",
-    a.projects.map((p) => ({ name: p.name, value: p.tokens })),
-    (n) => compact.format(n),
-    h,
-  )}${bars(
-    "Conversations per project",
-    a.projects.map((p) => ({ name: p.name, value: p.tasks })),
-    (n) => whole.format(n),
-    h,
-  )}${bars(
+  return `<details class="analytics-section" data-usage-detail="analytics" open><summary>Projects & conversations <span class="tag">Read-only T3 history</span></summary>${distribution(activity, h)}${projectOverview(a, h, view.projectMetric)}<div class="analytics-grid">${bars(
     "Largest conversations by value",
     a.tasks.map((t) => ({
       name: t.title,

@@ -423,3 +423,42 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   #toast { max-width: calc(100vw - 24px); white-space: normal; overflow-wrap: anywhere; }
 }
 @media (max-width: 650px) { .tabs { flex-wrap: wrap; overflow-x: visible; gap: 10px 18px; } }
+
+/* Let the breakdown reflow instead of opening a second horizontal scroll area. */
+.usage-table { table-layout: fixed; }
+.usage-table th, .usage-table td { white-space: normal; overflow-wrap: anywhere; }
+.table-scroll { overflow: visible; min-width: 0; }
+.field-row > * { min-width: 0; overflow-wrap: anywhere; }
+.graph-coverage { font-size: 11px !important; color: var(--faint); min-height: 18px; margin: 0 0 8px; }
+.daily-usage .chart-wrap { margin: 24px 0 30px; }
+.daily-plot { height: 170px; position: relative; padding-left: 64px; }
+.daily-axis { position: absolute; inset: 0 auto 0 0; width: 54px; color: var(--faint); font: 11px var(--mono); }
+.daily-axis span { position: absolute; right: 0; transform: translateY(50%); }
+.daily-columns { height: 100%; display: grid; align-items: end; gap: 4px; border-bottom: 1px solid var(--line); }
+.daily-day { position: relative; display: flex; align-items: end; min-width: 0; height: 100%; }
+.daily-day i { display: block; width: 100%; background: var(--green); border-radius: 3px 3px 0 0; }
+.daily-day:hover i, .daily-day:focus i { filter: brightness(1.2); }
+.daily-date { position: absolute; top: calc(100% + 9px); left: 0; font: 11px var(--mono); color: var(--faint); white-space: nowrap; }
+.daily-date.last { left: auto; right: 0; }
+.project-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.project-heading h2 { margin: 0; font-size: 18px; }
+.project-heading select { max-width: 100%; min-width: 0; }
+.project-mix { display: grid; grid-template-columns: minmax(160px,240px) minmax(0,1fr); align-items: start; gap: 32px; }
+.project-mix .chart-wrap svg { max-height: 240px; }
+.project-count { fill: var(--text); font: 600 30px var(--mono); }
+.project-list { list-style: none; padding: 0; margin: 0; }
+.project-list li { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.project-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.project-name i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.project-list li > span:last-child { flex-shrink: 0; text-align: right; font-family: var(--mono); }
+.project-list small { display: block; color: var(--faint); font-size: 11px; }
+.project-others { margin-top: 14px; }
+.project-others summary { font-size: 13px; }
+.project-others summary > span { margin-left: 8px; color: var(--faint); font: 11px var(--mono); }
+@media (max-width: 650px) {
+  .project-mix { grid-template-columns: minmax(0,1fr); gap: 12px; }
+  .project-mix > .chart-wrap { max-width: 210px; width: 100%; margin: 0 auto; }
+  .daily-columns { gap: 2px; }
+  .daily-plot { height: 150px; padding-left: 54px; }
+  .daily-axis { width: 46px; font-size: 10px; }
+}
