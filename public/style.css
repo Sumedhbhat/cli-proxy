@@ -470,3 +470,37 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ranking-more[open] > summary .show-less { display: inline; }
 
 .ranking-more[open] > summary .fine { display: none; }
+
+.token-bands { display: grid; grid-template-columns: minmax(150px,210px) minmax(0,1fr); gap: 28px; align-items: start; }
+.token-bands > svg { width: 100%; max-width: 210px; height: auto; }
+.token-bands .axis { fill: var(--faint); font: 11px var(--mono); }
+.token-bands ul { list-style: none; padding: 0; margin: 0; }
+.token-bands li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.token-bands li > span { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 15px; }
+.token-bands li i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.token-bands strong { text-align: right; font: 600 18px var(--mono); }
+.token-bands small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 3px; }
+.breakdown-cards { display: none; }
+@media (max-width: 650px) {
+  .token-bands { grid-template-columns: minmax(0,1fr); gap: 14px; }
+  .token-bands > svg { max-width: 160px; margin: 0 auto; }
+  .breakdown-table { display: none; }
+  .breakdown-cards { display: grid; gap: 12px; }
+  .breakdown-panel .section-head { align-items: stretch; flex-direction: column; gap: 12px; }
+  .breakdown-panel .tabs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; width: 100%; }
+  .breakdown-panel .tab { min-width: 0; font-size: 13px; }
+  .breakdown-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
+  .breakdown-card header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; }
+  .breakdown-card h3 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-size: 16px; font-weight: 500; }
+  .breakdown-provider { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .breakdown-provider .provider-mark, .breakdown-provider svg { width: 16px; height: 16px; }
+  .breakdown-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 18px 0 12px; }
+  .breakdown-metrics small { display: block; color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+  .breakdown-metrics strong { display: block; overflow-wrap: anywhere; font: 600 20px var(--mono); }
+  .breakdown-card > .fine { font-size: 12px; margin-bottom: 12px; }
+  .breakdown-card summary { font-size: 13px; color: var(--muted); }
+  .breakdown-card dl { margin: 12px 0 0; }
+  .breakdown-card dl > div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 12px; }
+  .breakdown-card dt { color: var(--muted); }
+  .breakdown-card dd { margin: 0; font-family: var(--mono); }
+}

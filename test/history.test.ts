@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { collectT3History } from "../src/t3-history.ts";
 import { insertHistory, readHistory } from "../src/quota-history.ts";
-import { taskAnalytics } from "../src/task-analytics.ts";
+import { taskAnalytics, tokenBands } from "../src/task-analytics.ts";
 import type { NativeUsage } from "../src/quota-history.ts";
 
 async function fixture(t: import("node:test").TestContext) {
@@ -225,4 +225,23 @@ test("T3 retained pricing honors fast multipliers and cache ratios without guess
     assert.ok(Math.abs((u.estimatedUsd || 0) - 0.000244) < 1e-12);
   assert.equal(result.usage[2].estimatedUsd, null);
   assert.equal(taskAnalytics([]).stats.count, 0);
+});
+
+test("readable token bands count each conversation once at exact boundaries", () => {
+  const values = [
+    0, 99999, 100000, 999999, 1000000, 5000000, 20000000, 100000000,
+  ];
+  const bands = tokenBands(values);
+  assert.deepEqual(
+    bands.map((b) => b.count),
+    [2, 2, 1, 1, 1, 1],
+  );
+  assert.equal(
+    bands.reduce((n, b) => n + b.count, 0),
+    values.length,
+  );
+  assert.equal(
+    tokenBands([]).every((b) => b.count === 0),
+    true,
+  );
 });

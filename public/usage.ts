@@ -330,7 +330,7 @@ function breakdownTable(report: Report, h: Helpers, view: UsageView) {
         ? h.mask(key)
         : key;
   const rows = report.breakdowns[view.breakdown];
-  return `<section class="panel"><div class="section-head"><h2>Breakdown</h2><div class="tabs" role="tablist" aria-label="Breakdown">${(
+  return `<section class="panel breakdown-panel"><div class="section-head"><h2>Breakdown</h2><div class="tabs" role="tablist" aria-label="Breakdown">${(
     ["devices", "accounts", "models"] as const
   )
     .map(
@@ -340,12 +340,27 @@ function breakdownTable(report: Report, h: Helpers, view: UsageView) {
     .join("")}</div></div>
     ${
       rows.length
-        ? `<div class="table-scroll"><table class="usage-table"><thead><tr><th>${view.breakdown === "devices" ? "Device" : view.breakdown === "accounts" ? "Account" : "Model"}</th><th>Provider</th><th>Executions</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Total</th><th>API-equivalent</th><th>Incomplete</th></tr></thead><tbody>${rows
+        ? `<div class="table-scroll breakdown-table"><table class="usage-table"><thead><tr><th>${view.breakdown === "devices" ? "Device" : view.breakdown === "accounts" ? "Account" : "Model"}</th><th>Provider</th><th>Executions</th><th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Total</th><th>API-equivalent</th><th>Incomplete</th></tr></thead><tbody>${rows
             .map(
               (r) =>
                 `<tr><td>${h.esc(name(r.key))}</td><td>${h.mark(r.provider)}${h.esc(h.pName(r.provider))}</td><td>${whole.format(r.executions)}</td><td>${tokens(r.tokens.inputUncached)}</td><td>${tokens(r.tokens.cacheRead)}</td><td>${tokens(r.tokens.cacheWrite)}</td><td>${tokens(r.tokens.output)}</td><td><strong>${tokens(r.tokens.total)}</strong></td><td>${r.estimate.executions["no-price"] && !r.estimate.low ? "Unknown" : range(r.estimate.low, r.estimate.high)}</td><td>${incomplete(r) ? `<span class="warn">${incomplete(r)}</span>` : "0"}</td></tr>`,
             )
-            .join("")}</tbody></table></div>`
+            .join("")}</tbody></table></div><div class="breakdown-cards">${rows
+            .map(
+              (r) =>
+                `<article class="breakdown-card"><header><h3>${h.esc(name(r.key))}</h3><span class="breakdown-provider">${h.mark(r.provider)}${h.esc(h.pName(r.provider))}</span></header><div class="breakdown-metrics"><div><small>Total tokens</small><strong>${tokens(r.tokens.total)}</strong></div><div><small>API-equivalent</small><strong>${r.estimate.executions["no-price"] && !r.estimate.low ? "Unknown" : range(r.estimate.low, r.estimate.high)}</strong></div></div><div class="fine">${whole.format(r.executions)} executions${incomplete(r) ? ` · <span class="warn">${incomplete(r)} incomplete</span>` : ""}</div><details data-usage-detail="breakdown-${view.breakdown}-${h.esc(r.provider)}-${h.esc(r.key)}"><summary>Token details</summary><dl>${[
+                  ["Input", tokens(r.tokens.inputUncached)],
+                  ["Cache read", tokens(r.tokens.cacheRead)],
+                  ["Cache write", tokens(r.tokens.cacheWrite)],
+                  ["Output", tokens(r.tokens.output)],
+                ]
+                  .map(
+                    ([label, value]) =>
+                      `<div><dt>${label}</dt><dd>${value}</dd></div>`,
+                  )
+                  .join("")}</dl></details></article>`,
+            )
+            .join("")}</div>`
         : '<p class="faint">No executions match these filters.</p>'
     }</section>`;
 }

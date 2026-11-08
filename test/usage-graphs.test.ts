@@ -41,7 +41,7 @@ const report: Report = {
 test("usage starts with three charts and exposes conversation distribution and coverage without invented quota", () => {
   const charts = topGraphs(report, helpers, usageView);
   assert.equal((charts.match(/<section /g) || []).length, 3);
-  assert.match(charts, /No retained quota snapshots/);
+  assert.match(charts, /No daily quota readings/);
   const tasks = projectGraphs(report, helpers);
   for (const label of [
     "Average",
@@ -105,8 +105,8 @@ test("project overview groups the long tail without losing projects or treating 
 });
 test("quota charts connect saved readings without visible markers and identify interpolation", () => {
   const at = (m: number) =>
-    new Date(Date.parse("2026-11-08T00:00:00Z") + m * 60000).toISOString();
-  const samples = [0, 5, 30].map((m, i) => ({
+    new Date(Date.parse("2026-11-01T00:00:00Z") + m * 60000).toISOString();
+  const samples = [0, 1440, 2880].map((m, i) => ({
     provider: "codex",
     account: "unknown",
     window: "weekly",
@@ -182,4 +182,30 @@ test("historical weekly readings join a sole live account, while different ident
     usageView,
   );
   assert.equal((multiple.match(/<path /g) || []).length, 3);
+});
+
+test("daily quota view retains the latest reading per day and removes hourly projections", () => {
+  const points = [
+    { at: "2026-11-01T00:00:00Z", remaining: 90 },
+    { at: "2026-11-01T18:00:00Z", remaining: 50 },
+    { at: "2026-11-02T12:00:00Z", remaining: 40 },
+  ].map((p) => ({
+    ...p,
+    provider: "codex",
+    account: "a",
+    window: "weekly",
+    resetsAt: null,
+    source: "provider" as const,
+  }));
+  const chart = topGraphs({ ...report, quotaHistory: points }, helpers, {
+    ...usageView,
+    range: "custom",
+    from: "2026-11-01",
+    to: "2026-11-02",
+  });
+  const path = chart.match(/<path d="([^"]*)"/)![1];
+  assert.equal((path.match(/L/g) || []).length, 1);
+  assert.match(path, /M[\d.]+,104.0 L[\d.]+,118.0/);
+  assert.doesNotMatch(chart, /percentage points \/ hour/);
+  assert.match(chart, /last saved reading per UTC day/);
 });

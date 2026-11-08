@@ -89,3 +89,18 @@ export function taskAnalytics(activity: ReadonlyArray<NativeUsage>) {
     },
   };
 }
+
+export function tokenBands(totals: ReadonlyArray<number>) {
+  const bands = [
+    { label: "Under 100K", min: 0, max: 100000 },
+    { label: "100K–1M", min: 100000, max: 1000000 },
+    { label: "1M–5M", min: 1000000, max: 5000000 },
+    { label: "5M–20M", min: 5000000, max: 20000000 },
+    { label: "20M–100M", min: 20000000, max: 100000000 },
+    { label: "100M or more", min: 100000000, max: Infinity },
+  ];
+  return bands.map((b) => ({
+    label: b.label,
+    count: totals.filter((n) => n >= b.min && n < b.max).length,
+  }));
+}

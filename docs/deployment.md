@@ -252,3 +252,11 @@ markers. Intermediate percentages are not measured. Recovered CLI readings join 
 sole identified account for display, with their unknown attribution disclosed;
 multiple identified accounts remain separate. Missing earlier
 percentages and failed refreshes are shown explicitly.
+
+Quota charts use the latest saved reading per UTC day, with daily date ticks and
+no hourly burn projection. The existing 7/30-day filters select weekly/monthly
+views. The current day is provisional; days without observations are unmeasured
+and connecting segments remain interpolation. A daily trend needs two recorded
+days. Token distribution uses six named ranges with conversation counts and
+percentages rather than equally wide histogram bins. On mobile, breakdowns use
+cards with expandable token details; the desktop table remains available.

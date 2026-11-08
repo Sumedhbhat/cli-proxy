@@ -1,6 +1,6 @@
 import type { Report, Helpers, UsageView } from "./usage.ts";
 import type { QuotaSample } from "../src/quota-history.ts";
-import { taskAnalytics } from "../src/task-analytics.ts";
+import { taskAnalytics, tokenBands } from "../src/task-analytics.ts";
 const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const compact = new Intl.NumberFormat(undefined, {
   notation: "compact",
@@ -19,10 +19,17 @@ const stamp = (s: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+const dayStamp = (day: string) =>
+  new Date(day.slice(0, 10) + "T00:00:00Z").toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 function quotaGraph(
   provider: string,
   all: QuotaSample[],
   h: Helpers,
+  view: UsageView,
   refreshErrors = 0,
 ) {
   const samples = all
@@ -35,7 +42,8 @@ function quotaGraph(
       samples.filter((s) => s.source === "provider").map((s) => s.account),
     ),
   ];
-  const seriesKey = (s: QuotaSample) => {
+  const series = new Map<string, Map<string, QuotaSample>>();
+  for (const s of samples) {
     const account =
       s.source === "native-cli" && accounts.length === 1
         ? accounts[0]
@@ -43,63 +51,63 @@ function quotaGraph(
     const window = /^(weekly|seven_day|secondary_window)$/.test(s.window)
       ? "weekly"
       : s.window;
-    return account + ":" + window;
-  };
-  const series = new Map<string, QuotaSample[]>();
-  for (const s of samples) {
-    const k = seriesKey(s);
-    series.set(k, [...(series.get(k) || []), s]);
+    const key = account + ":" + window;
+    const days = series.get(key) || new Map<string, QuotaSample>();
+    days.set(s.at.slice(0, 10), s);
+    series.set(key, days);
   }
-  const start = samples.length
-      ? Date.parse(samples[0].at)
-      : Date.now() - 86400000,
-    end = Math.max(
-      Date.now(),
-      Date.parse(samples.at(-1)?.at || new Date().toISOString()),
-    );
-  const x = (at: string) =>
-      42 + (300 * (Date.parse(at) - start)) / Math.max(3600000, end - start),
-    y = (n: number) => 174 - 1.4 * n;
+  const today = new Date().toISOString().slice(0, 10),
+    dayMs = 86400000;
+  const from =
+    view.range === "custom"
+      ? view.from || samples[0]?.at.slice(0, 10) || today
+      : view.range === "all"
+        ? samples[0]?.at.slice(0, 10) || today
+        : new Date(Date.parse(today) - ((Number(view.range) || 30) - 1) * dayMs)
+            .toISOString()
+            .slice(0, 10);
+  const to = view.range === "custom" && view.to ? view.to : today;
+  const start = Date.parse(from),
+    end = Date.parse(to),
+    span = Math.max(dayMs, end - start);
+  const x = (day: string) =>
+    42 + (300 * (Date.parse(day.slice(0, 10)) - start)) / span;
+  const y = (n: number) => 174 - 1.4 * n;
+  const dailyDays = new Set(samples.map((s) => s.at.slice(0, 10))).size;
   const lines = [...series.values()]
-    .map((points, i) => {
-      let path = "";
-      points.forEach((p, j) => {
-        path += `${j === 0 ? "M" : "L"}${x(p.at).toFixed(1)},${y(p.remaining).toFixed(1)} `;
-      });
+    .map((days, i) => {
+      const points = [...days.values()];
+      const path = points
+        .map(
+          (p, j) =>
+            `${j === 0 ? "M" : "L"}${x(p.at).toFixed(1)},${y(p.remaining).toFixed(1)}`,
+        )
+        .join(" ");
       return (
         `<path d="${path}" fill="none" stroke="var(--series-${provider})" stroke-width="2.3" opacity="${Math.max(0.4, 1 - i * 0.12)}"/>` +
         points
           .map(
             (p) =>
-              `<g class="trend-day" tabindex="0" data-tip="${h.esc(`${stamp(p.at)} · ${p.remaining.toFixed(1)}% remaining · ${p.source === "native-cli" ? "CLI history, account unknown" : "Account " + (i + 1)} · ${p.window}`)}"><circle cx="${x(p.at)}" cy="${y(p.remaining)}" r="8" fill="transparent"/><title>${h.esc(stamp(p.at) + ": " + p.remaining.toFixed(1) + "% remaining")}</title></g>`,
+              `<g class="trend-day" tabindex="0" data-tip="${h.esc(`${dayStamp(p.at)} · ${p.remaining.toFixed(1)}% remaining · last saved reading of the day${p.source === "native-cli" ? " · CLI history, account unknown" : ""}`)}"><circle cx="${x(p.at)}" cy="${y(p.remaining)}" r="8" fill="transparent"/><title>${h.esc(dayStamp(p.at) + ": " + p.remaining.toFixed(1) + "% remaining")}</title></g>`,
           )
           .join("")
       );
     })
     .join("");
-  const same = latest ? series.get(seriesKey(latest)) || [] : [],
-    prev = [...same]
-      .reverse()
-      .find(
-        (p) =>
-          latest &&
-          p.source === "provider" &&
-          p.account === latest.account &&
-          p.resetsAt !== null &&
-          latest.resetsAt !== null &&
-          Math.abs(Date.parse(p.resetsAt) - Date.parse(latest.resetsAt)) <
-            60000 &&
-          Date.parse(latest.at) - Date.parse(p.at) >= 15 * 60000,
-      );
-  const rate =
-    latest && latest.source === "provider" && prev
-      ? Math.max(
-          0,
-          (prev.remaining - latest.remaining) /
-            ((Date.parse(latest.at) - Date.parse(prev.at)) / 3600000),
-        )
-      : null;
-  return `<section class="panel quota-graph"><h2>${name} weekly limit</h2><div class="graph-number">${latest ? latest.remaining.toFixed(1) + "%" : "—"}<small>remaining</small></div><p class="graph-caption">${rate === null ? "Collecting burn rate" : rate.toFixed(1) + " percentage points / hour"}${latest?.resetsAt ? " · resets " + h.esc(stamp(latest.resetsAt)) : ""}</p><p class="graph-coverage">${refreshErrors ? "Refresh unavailable · showing saved data" : latest && samples.every((p) => p.remaining === 0) ? "Earlier depletion not recorded" : ""}</p><div class="chart-wrap"><svg viewBox="0 0 360 205" role="img" aria-label="${name} weekly quota remaining over time">${[0, 50, 100].map((v) => `<line class="grid" x1="42" x2="342" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="35" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("")}${lines}<text class="axis" x="42" y="199">${h.esc(stamp(new Date(start).toISOString()))}</text><text class="axis" x="342" y="199" text-anchor="end">Now</text></svg><div class="chart-tip" hidden></div>${!samples.length ? '<p class="chart-empty">No retained quota snapshots for this range. New observations are collected automatically.</p>' : ""}</div><details data-usage-detail="quota-${provider}"><summary>Quota history</summary><p class="fine">${samples.length} observations${samples.length ? " · history begins " + h.esc(stamp(samples[0].at)) : ""}. ${refreshErrors ? "Quota refresh failed for " + refreshErrors + " account(s). " : ""}${samples.length && samples.every((p) => p.remaining === 0) ? "All saved observations in this range are at 0%. Earlier depletion cannot be reconstructed from tokens." : ""}</p><p class="fine">Provider observations, per account/window. Resets rise back toward 100% when reported. Lines connect saved readings using linear interpolation; intermediate percentages were not measured. Recovered CLI readings have unknown account identity and join the current account line for display only when there is one identified account. Different identified accounts remain separate.</p>${latest ? `<p class="fine">Last observed ${h.esc(stamp(latest.at))}</p>` : ""}</details></section>`;
+  const ticks = Array.from(
+    { length: Math.min(5, Math.max(2, Math.round((end - start) / dayMs) + 1)) },
+    (_, i) => i,
+  );
+  const dateTicks = ticks
+    .map((_, i) => {
+      const f = i / (ticks.length - 1),
+        day = new Date(start + Math.round((f * (end - start)) / dayMs) * dayMs)
+          .toISOString()
+          .slice(0, 10);
+      return `<text class="axis" x="${42 + 300 * f}" y="199" text-anchor="${i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"}">${h.esc(dayStamp(day))}</text>`;
+    })
+    .join("");
+  return `<section class="panel quota-graph"><h2>${name} weekly limit</h2><div class="graph-number">${latest ? latest.remaining.toFixed(1) + "%" : "—"}<small>remaining</small></div><p class="graph-caption">Daily remaining${latest?.resetsAt ? " · resets " + h.esc(new Date(latest.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : ""}</p><p class="graph-coverage">${refreshErrors ? "Refresh unavailable · showing saved data" : latest && samples.every((p) => p.remaining === 0) ? "Earlier depletion not recorded" : ""}</p><div class="chart-wrap"><svg viewBox="0 0 360 205" role="img" aria-label="${name} daily quota remaining">${[0, 50, 100].map((v) => `<line class="grid" x1="42" x2="342" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="35" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("")}${lines}${dateTicks}</svg><div class="chart-tip" hidden></div>${dailyDays < 2 ? `<p class="chart-empty">${dailyDays ? "One day recorded. A daily trend needs another day." : "No daily quota readings for this range yet."}</p>` : ""}</div><details data-usage-detail="quota-${provider}"><summary>Quota history</summary><p class="fine">${samples.length} saved observations across ${dailyDays} days. The line uses the last saved reading per UTC day, per account and window. Today's value can change while the day is in progress. Missing days have no measured value; lines between recorded days are linear interpolation. Recovered CLI readings have unknown account identity and join the sole identified account for display. Different identified accounts remain separate.</p>${latest ? `<p class="fine">Last observed ${h.esc(stamp(latest.at))}</p>` : ""}</details></section>`;
 }
 function dailyGraph(report: Report, h: Helpers, view: UsageView) {
   const days = new Map<
@@ -152,22 +160,26 @@ function bars(
 function distribution(activity: NonNullable<Report["activity"]>, h: Helpers) {
   const a = taskAnalytics(activity),
     s = a.stats;
-  const binCount = s.min === s.max ? 1 : 8;
-  const bins = Array.from({ length: binCount }, (_, i) => ({
-    from: s.min + ((s.max - s.min) * i) / binCount,
-    to: s.min + ((s.max - s.min) * (i + 1)) / binCount,
-    count: 0,
-  }));
-  for (const task of a.tasks)
-    bins[
-      Math.min(
-        binCount - 1,
-        Math.floor(
-          (binCount * (task.tokens - s.min)) / Math.max(1, s.max - s.min),
-        ),
-      )
-    ].count++;
-  const max = Math.max(1, ...bins.map((b) => b.count));
+  const bins = tokenBands(a.tasks.map((t) => t.tokens));
+  const colors = [
+    "var(--blue)",
+    "var(--green)",
+    "var(--series-claude)",
+    "var(--yellow)",
+    "var(--series-codex)",
+    "var(--faint)",
+  ];
+  let offset = 0;
+  const slices = bins
+    .map((b, i) => {
+      const share = s.count ? (100 * b.count) / s.count : 0,
+        start = offset;
+      offset += share;
+      return share
+        ? `<circle cx="100" cy="100" r="78" pathLength="100" fill="none" stroke="${colors[i]}" stroke-width="22" stroke-dasharray="${share} ${100 - share}" stroke-dashoffset="${-start}" transform="rotate(-90 100 100)"><title>${h.esc(b.label + ": " + b.count + " conversations")}</title></circle>`
+        : "";
+    })
+    .join("");
   return `<section class="panel task-distribution"><h2>Tokens per T3 conversation</h2><div class="task-stats">${[
     ["Average", s.mean],
     ["Median", s.median],
@@ -184,10 +196,10 @@ function distribution(activity: NonNullable<Report["activity"]>, h: Helpers) {
     )
     .join(
       "",
-    )}</div><div class="chart-wrap"><svg viewBox="0 0 600 190" role="img" aria-label="Distribution of tokens per T3 conversation">${bins.map((b, i) => `<g class="trend-day" tabindex="0" data-tip="${h.esc(whole.format(b.from) + "–" + whole.format(b.to) + " tokens · " + b.count + " conversations")}"><rect class="hit" x="${24 + i * 70}" y="12" width="66" height="145"/><rect x="${25 + i * 70}" y="${157 - (b.count / max) * 135}" width="62" height="${(b.count / max) * 135}" fill="var(--blue)" rx="3"/><text class="axis" x="${55 + i * 70}" y="177" text-anchor="middle">${compact.format(b.from)}</text><text class="axis" x="${55 + i * 70}" y="${149 - (b.count / max) * 135}" text-anchor="middle">${b.count || ""}</text></g>`).join("")}</svg><div class="chart-tip" hidden></div></div><details data-usage-detail="task-coverage"><summary>Statistics and coverage</summary><p class="fine">${s.count} mapped T3 conversations within the selected range. Population variance: ${whole.format(s.variance)} tokens². Standard deviation measures spread around the average. ${a.unassigned} usage observations could not be mapped to a T3 conversation and are excluded from task statistics. A conversation can be partial at range boundaries.</p></details></section>`;
+    )}</div><div class="token-bands"><svg viewBox="0 0 200 200" role="img" aria-label="Conversations grouped by total tokens"><circle cx="100" cy="100" r="78" fill="none" stroke="var(--line)" stroke-width="22"/>${slices}<text class="project-count" x="100" y="100" text-anchor="middle">${s.count}</text><text class="axis" x="100" y="120" text-anchor="middle">conversations</text></svg><ul>${bins.map((b, i) => `<li><span><i style="background:${colors[i]}"></i>${h.esc(b.label)}</span><strong>${b.count}<small>${s.count ? ((100 * b.count) / s.count).toFixed(1) : "0"}%</small></strong></li>`).join("")}</ul></div><details data-usage-detail="task-coverage"><summary>Statistics and coverage</summary><p class="fine">${s.count} mapped T3 conversations within the selected range. Population variance: ${whole.format(s.variance)} tokens². Size bands show how many conversations fall in each token range, not how many tokens the whole band used. Lower boundaries are inclusive and upper boundaries exclusive. K means thousand and M means million. Standard deviation measures spread around the average. ${a.unassigned} usage observations could not be mapped to a T3 conversation and are excluded from task statistics. A conversation can be partial at range boundaries.</p></details></section>`;
 }
 export function topGraphs(report: Report, h: Helpers, view: UsageView) {
-  return `<div class="usage-graphs">${quotaGraph("claude", report.quotaHistory || [], h, report.quotaRefreshErrors?.claude)}${quotaGraph("codex", report.quotaHistory || [], h, report.quotaRefreshErrors?.codex)}${dailyGraph(report, h, view)}</div>`;
+  return `<div class="usage-graphs">${quotaGraph("claude", report.quotaHistory || [], h, view, report.quotaRefreshErrors?.claude)}${quotaGraph("codex", report.quotaHistory || [], h, view, report.quotaRefreshErrors?.codex)}${dailyGraph(report, h, view)}</div>`;
 }
 function projectOverview(
   a: ReturnType<typeof taskAnalytics>,
