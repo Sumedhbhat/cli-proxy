@@ -1,3 +1,4 @@
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -10,7 +11,7 @@ test("Codex fetches expiry details through the engine for direct and plugin quot
   let mode = "success",
     count = 2,
     embedded = false;
-  const detailCalls = [];
+  const detailCalls: unknown[] = [];
   const credits = [
     { status: "available", expires_at: later },
     { status: "available", expires_at: soon },
@@ -48,7 +49,7 @@ test("Codex fetches expiry details through the engine for direct and plugin quot
     };
     res.end(
       JSON.stringify(
-        req.url.endsWith("/quota/fetch")
+        req.url?.endsWith("/quota/fetch")
           ? usage
           : { status_code: 200, body: JSON.stringify(usage) },
       ),
@@ -62,7 +63,7 @@ test("Codex fetches expiry details through the engine for direct and plugin quot
   });
   const makeEngine = () =>
     createEngine({
-      url: `http://127.0.0.1:${server.address().port}`,
+      url: `http://127.0.0.1:${address(server).port}`,
       key: "management-test",
     });
   for (const supportsQuota of [false, true]) {
@@ -74,7 +75,7 @@ test("Codex fetches expiry details through the engine for direct and plugin quot
     };
     for (mode of ["success", "http", "malformed", "network"]) {
       const engine = await makeEngine();
-      const before = detailCalls.length;
+      const before: number = detailCalls.length;
       const quota = await engine.quota(account);
       assert.equal(quota.availableResets, 2);
       assert.equal(quota.windows[0].remaining, 83);
@@ -93,7 +94,7 @@ test("Codex fetches expiry details through the engine for direct and plugin quot
     const engine = await makeEngine();
     mode = "success";
     embedded = true;
-    const before = detailCalls.length;
+    const before: number = detailCalls.length;
     assert.equal((await engine.quota(account)).nextResetExpiresAt, soon);
     embedded = false;
     count = 0;
@@ -118,16 +119,21 @@ test("optional Codex detail failures back off per account and recover after five
       url: "http://engine.test",
       key: "test",
     });
-    const lookups = [];
+    const lookups: unknown[] = [];
     let recovered = false,
       usageCalls = 0;
     const mockedFetch = t.mock.method(
       globalThis,
       "fetch",
-      async (input, init) => {
-        const path = new URL(input).pathname.split("/").at(-1);
-        const options = { body: JSON.parse(init.body) };
-        const response = (value) => new Response(JSON.stringify(value));
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(
+          input instanceof Request ? input.url : input,
+        ).pathname
+          .split("/")
+          .at(-1);
+        const options = { body: JSON.parse(String(init?.body)) };
+        const response = (value: unknown) =>
+          new Response(JSON.stringify(value));
         if (path === "fetch") {
           usageCalls++;
           return response({
@@ -203,7 +209,7 @@ test(
       await new Promise((resolve) => server.close(resolve));
     });
     const engine = await createEngine({
-      url: `http://127.0.0.1:${server.address().port}`,
+      url: `http://127.0.0.1:${address(server).port}`,
       key: "test",
     });
     const quota = await engine.quota({

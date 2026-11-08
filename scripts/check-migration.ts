@@ -8,7 +8,7 @@ import { InputError } from "../src/domain.ts";
 const check = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const failures: string[] = [];
-  for (const dir of ["src", "scripts", "public"]) {
+  for (const dir of ["src", "scripts", "public", "test"]) {
     for (const name of yield* fs.readDirectory(dir)) {
       if (
         name.endsWith(".js") &&
@@ -21,7 +21,7 @@ const check = Effect.gen(function* () {
       const source = yield* fs.readFileString(`${dir}/${name}`);
       const forbidden = [
         /@ts-(?:ignore|nocheck)/,
-        /(?<!\.)\b(?:setInterval|setTimeout)\s*\(/,
+        ...(dir === "test" ? [] : [/(?<!\.)\b(?:setInterval|setTimeout)\s*\(/]),
         /:\s*any\b/,
         /\bas\s+any\b/,
         /\bexecFileSync\s*\(/,

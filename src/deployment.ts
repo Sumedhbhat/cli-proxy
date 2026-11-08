@@ -1,11 +1,12 @@
 // Deployment and recovery deliberately use only Node built-ins. The installed
 // maintenance bundle must keep working when the application cannot load Effect.
 import * as fs from "node:fs/promises";
+import { appendDiagnostic, reasonCode } from "./diagnostics.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { once } from "node:events";
@@ -81,6 +82,8 @@ export interface Release {
   files: Record<string, string>;
   createdAt: string;
   sourceCommit: string;
+  sourceDirty?: boolean;
+  buildDigest?: string;
 }
 interface Transaction {
   phase: "switching" | "verified" | "rolled-back" | "failed";
@@ -342,6 +345,9 @@ export function serviceUnits(root: string, node: string) {
     "cli-proxy-engine.service": `[Unit]\nDescription=CLI Proxy engine\nAfter=network-online.target\n${limits}\n[Service]\nWorkingDirectory=${data.replaceAll("%", "%%")}\nExecStart=${quote(join(current, "cli-proxy-api"))} -config ${quote(join(current, "engine.yaml"))}\n${service}`,
     "cli-proxy-console.service": `[Unit]\nDescription=CLI Proxy gateway\nAfter=cli-proxy-engine.service\nWants=cli-proxy-engine.service\n${limits}\n[Service]\nWorkingDirectory=${current.replaceAll("%", "%%")}\nEnvironment=${quote(`DATA_DIR=${data}`)}\nEnvironment=${quote(`CLI_PROXY_INSTALLATION=${root}`)}\nExecStart=${quote(node)} ${quote(`--env-file=${join(root, ".env")}`)} ${quote(join(current, "src/server.ts"))}\n${service}`,
     "cli-proxy-health.service": `[Unit]\nDescription=CLI Proxy independent health and recovery\n\n[Service]\nType=oneshot\nEnvironment=${quote(`CLI_PROXY_INSTALLATION=${root}`)}\nExecStart=${quote(node)} ${quote(join(root, "maintenance.cjs"))} monitor\nTimeoutStartSec=120\n`,
+    "cli-proxy-history.service": `[Unit]\nDescription=Read-only T3 usage metadata import\n\n[Service]\nType=oneshot\nEnvironment=${quote(`CLI_PROXY_INSTALLATION=${root}`)}\nExecStart=${quote(node)} ${quote(join(current, "scripts/import-history.ts"))} --month=all\nTimeoutStartSec=180\n`,
+    "cli-proxy-history.timer":
+      "[Unit]\nDescription=Collect T3 usage metadata without changing T3\n\n[Timer]\nOnBootSec=120\nOnUnitActiveSec=300\nUnit=cli-proxy-history.service\n\n[Install]\nWantedBy=timers.target\n",
     "cli-proxy-health.timer":
       "[Unit]\nDescription=Check CLI Proxy independently of its gateway\n\n[Timer]\nOnBootSec=90\nOnUnitActiveSec=60\nUnit=cli-proxy-health.service\n\n[Install]\nWantedBy=timers.target\n",
   };
@@ -419,6 +425,11 @@ async function liveReady(root: string, release: string) {
   );
 }
 async function record(root: string, transaction: Transaction) {
+  await appendDiagnostic(join(root, ".local"), "deploy", {
+    kind: transaction.phase,
+    release: basename(transaction.candidate),
+    status: transaction.phase,
+  }).catch(() => {});
   await atomicWrite(
     join(root, "deployment.json"),
     JSON.stringify(transaction, null, 2),
@@ -590,14 +601,25 @@ export async function deploy(source: string, signal?: AbortSignal) {
         await execute("git", ["rev-parse", "HEAD"], { cwd: source })
       ).stdout.trim();
     } catch {}
+    const files = await fingerprint(release);
+    const sourceDirty = await execute("git", ["status", "--porcelain"], {
+      cwd: source,
+    }).then(
+      (v) => !!v.stdout.trim(),
+      () => true,
+    );
     const manifest: Release = {
+      sourceDirty,
+      buildDigest: createHash("sha256")
+        .update(JSON.stringify(files))
+        .digest("hex"),
       id,
       schemaVersion,
       node: process.execPath,
       engineVersion: (await read(join(source, ".local/engine-version"))).trim(),
       createdAt: new Date().toISOString(),
       sourceCommit,
-      files: await fingerprint(release),
+      files,
     };
     await atomicWrite(
       join(release, "release.json"),
@@ -648,11 +670,20 @@ export async function deploy(source: string, signal?: AbortSignal) {
         await atomicWrite(join(unitRoot(), name), contents);
       await control("daemon-reload");
       await control("reset-failed", ...units);
-      await control("enable", ...units.toReversed(), "cli-proxy-health.timer");
+      await control(
+        "enable",
+        ...units.toReversed(),
+        "cli-proxy-health.timer",
+        "cli-proxy-history.timer",
+      );
       await control("start", ...units.toReversed());
       await waitReady(() => liveReady(root, release), 30000, signal);
       if (previous) await point(join(root, "previous"), previous);
-      await control("start", "cli-proxy-health.timer");
+      await control(
+        "start",
+        "cli-proxy-health.timer",
+        "cli-proxy-history.timer",
+      );
       // Keep the Claude launcher path already stored by T3. Real code lives in current.
       await fs.mkdir(join(root, "scripts"), { recursive: true });
       await point(
@@ -715,6 +746,11 @@ export async function monitor(root: string) {
       await recover(root);
       const release = await fs.realpath(join(root, "current"));
       await liveReady(root, release);
+      await appendDiagnostic(join(root, ".local"), "health", {
+        kind: "heartbeat",
+        release: basename(release),
+        status: "ok",
+      });
       const path = join(root, "incident.json");
       const old = await json<{ recoveredAt?: string }>(path).catch(() => null);
       if (old && !old.recoveredAt)
@@ -727,6 +763,11 @@ export async function monitor(root: string) {
           ),
         );
     } catch (error) {
+      await appendDiagnostic(join(root, ".local"), "health", {
+        kind: "heartbeat",
+        status: "error",
+        reason: reasonCode(error),
+      }).catch(() => {});
       await incident(root, "health-check-failed");
       throw error;
     }

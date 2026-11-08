@@ -1,12 +1,14 @@
+import { present } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { codexUsageLimit, codexLimitError } from "../src/codex-limit.ts";
 
 const now = Date.parse("2026-10-26T04:00:00Z");
-const at = (minutes) => new Date(now + minutes * 60000).toISOString();
-const epoch = (minutes) => String(Math.floor((now + minutes * 60000) / 1000));
+const at = (minutes: number) => new Date(now + minutes * 60000).toISOString();
+const epoch = (minutes: number) =>
+  String(Math.floor((now + minutes * 60000) / 1000));
 // Shaped like the engine's auth-files entries for Codex credentials.
-const codex = (cooldowns, signals = {}, extra = {}) => ({
+const codex = (cooldowns: unknown[], signals = {}, extra = {}) => ({
   provider: "codex",
   plan_type: "plus",
   cooldowns,
@@ -41,6 +43,7 @@ test("a Codex pool blocked by quota reports the provider windows and nearest res
     { provider: "claude", cooldowns: [] },
   ];
   const limit = codexUsageLimit(files, "gpt-6.1-sol", now);
+  assert.ok(limit);
   assert.equal(limit.resetsAt, at(160));
   assert.equal(limit.plan, "plus");
   assert.equal(limit.windowMinutes, 300);
@@ -55,7 +58,7 @@ test("a Codex pool blocked by quota reports the provider windows and nearest res
   // Without a model, as on a websocket upgrade, only credential-wide cooldowns count.
   assert.equal(codexUsageLimit(files, undefined, now), null);
   assert.equal(
-    codexUsageLimit(files.slice(0, 1), undefined, now).resetsAt,
+    present(codexUsageLimit(files.slice(0, 1), undefined, now)).resetsAt,
     at(160),
   );
 });
@@ -129,6 +132,7 @@ test("stale windows are replaced by the cooldown the engine enforces", () => {
     ),
   ];
   const limit = codexUsageLimit(files, "gpt-6.1-sol", now);
+  assert.ok(limit);
   assert.deepEqual(limit.headers, {
     "x-codex-primary-used-percent": "100",
     "x-codex-primary-reset-at": epoch(160),
@@ -137,7 +141,7 @@ test("stale windows are replaced by the cooldown the engine enforces", () => {
   // The most recently observed provider headers win over older credential-level ones.
   const withModel = [{ ...files[0], model_quotas: { "gpt-6.1-sol": newer } }];
   assert.equal(
-    codexUsageLimit(withModel, "gpt-6.1-sol", now).headers[
+    present(codexUsageLimit(withModel, "gpt-6.1-sol", now)).headers[
       "x-codex-primary-reset-at"
     ],
     epoch(170),

@@ -1,3 +1,9 @@
+import {
+  account as baseAccount,
+  quota as baseQuota,
+} from "./application-fixture.ts";
+import type { Account, DashboardState } from "../src/domain.ts";
+import { present } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -21,20 +27,26 @@ test("quota and account views show reset balances, nearest expiries, unknown val
       ],
     },
   });
-  const account = (id, provider, availableResets, extra = {}) => ({
-    id,
-    name: `${id}.json`,
+  const account = (
+    id: string,
+    provider: string,
+    availableResets: number | null | undefined,
+    extra: Partial<Account> = {},
+  ): Account => ({
+    ...baseAccount(id),
     provider,
-    quota: {
-      availableResets,
-      fetchedAt: new Date().toISOString(),
-      windows: [],
-    },
+    quota: { ...baseQuota(0), availableResets: availableResets ?? null },
     ...extra,
   });
-  const rankedAccount = (id, weeklyDays, expiryDays, shortRemaining = 100) =>
+  const rankedAccount = (
+    id: string,
+    weeklyDays: number,
+    expiryDays: number,
+    shortRemaining = 100,
+  ) =>
     account(id, "codex", 2, {
       quota: {
+        ...baseQuota(0),
         availableResets: 2,
         fetchedAt: new Date().toISOString(),
         nextResetExpiresAt: new Date(
@@ -59,6 +71,11 @@ test("quota and account views show reset balances, nearest expiries, unknown val
       },
     });
   const state = {
+    demo: false,
+    refreshing: false,
+    lastRefresh: null,
+    refreshError: null,
+    schedulerError: null,
     accounts: [
       account("one", "claude", 1),
       account("zero", "codex", 0),
@@ -67,6 +84,7 @@ test("quota and account views show reset balances, nearest expiries, unknown val
       account("cached", "claude", 2, { quotaError: "Upstream unavailable" }),
       account("stale", "claude", 3, {
         quota: {
+          ...baseQuota(0),
           availableResets: 3,
           fetchedAt: new Date(Date.now() - 3600000).toISOString(),
           windows: [],
@@ -80,76 +98,64 @@ test("quota and account views show reset balances, nearest expiries, unknown val
       }),
       account("stale-expiry", "codex", 2, {
         quota: {
+          ...baseQuota(0),
           ...expiryQuota,
           fetchedAt: new Date(Date.now() - 3600000).toISOString(),
         },
       }),
       account("elapsed-expiry", "codex", 2, {
         quota: {
+          ...baseQuota(0),
           ...expiryQuota,
           nextResetExpiresAt: new Date(Date.now() - 1000).toISOString(),
         },
       }),
       account("invalid-expiry", "codex", 2, {
-        quota: { ...expiryQuota, nextResetExpiresAt: "invalid" },
+        quota: {
+          ...baseQuota(0),
+          ...expiryQuota,
+          nextResetExpiresAt: "invalid",
+        },
       }),
       account("zero-expiry", "codex", 0, {
-        quota: { ...expiryQuota, availableResets: 0 },
+        quota: {
+          ...baseQuota(0),
+          ...expiryQuota,
+          availableResets: 0,
+        },
       }),
       rankedAccount("a-later", 3, 5),
       rankedAccount("m-credit-tomorrow", 4, 1),
       rankedAccount("z-weekly-today", 0.5, 2),
       rankedAccount("blocked", 0.1, 0.1, 0),
     ],
-    ranks: [],
-    settings: {},
-    routing: {},
+    ranks: rankAccounts([]),
+    settings: { scheduler: false, intervalSeconds: 60 },
+    routing: { affinity: true, strategy: "fill-first" },
     events: [],
     connected: true,
-  };
-  state.demo = false;
-  state.refreshing = false;
-  state.lastRefresh = null;
-  state.refreshError = null;
-  state.schedulerError = null;
-  state.settings = { scheduler: false, intervalSeconds: 60 };
-  state.routing = { affinity: true, strategy: "fill-first" };
-  state.accounts = state.accounts.map((a) => ({
-    email: "",
-    disabled: false,
-    runtimeOnly: false,
-    status: "active",
-    priority: 0,
-    supportsQuota: false,
-    accountId: null,
-    plan: "",
-    success: 0,
-    failed: 0,
-    quotaError: null,
-    ...a,
-    quota: a.quota && {
-      plan: null,
-      availableResets: null,
-      nextResetExpiresAt: null,
-      ...a.quota,
-      availableResets: a.quota.availableResets ?? null,
-    },
-  }));
+  } satisfies DashboardState;
   state.ranks = rankAccounts(state.accounts);
-  const elements = new Map();
-  const element = (selector) => {
+  type Handler = (event?: unknown) => unknown;
+  type Element = {
+    innerHTML: string;
+    handlers: Record<string, Handler>;
+    addEventListener(type: string, handler: Handler): void;
+  };
+  const elements = new Map<string, Element>();
+  const element = (selector: string) => {
     if (!elements.has(selector))
       elements.set(selector, {
         innerHTML: "",
         handlers: {},
-        addEventListener(type, handler) {
+        addEventListener(type: string, handler: Handler) {
           this.handlers[type] = handler;
         },
       });
-    return elements.get(selector);
+    return present(elements.get(selector));
   };
   const location = { href: "http://localhost/", hash: "#quota" },
-    handlers = {};
+    handlers: Record<string, Handler> = {};
   const source = await readFile(
     new URL("../public/app.js", import.meta.url),
     "utf8",
@@ -162,7 +168,7 @@ test("quota and account views show reset balances, nearest expiries, unknown val
       body: { classList: { remove() {} } },
     },
     window: {
-      addEventListener(type, handler) {
+      addEventListener(type: string, handler: Handler) {
         handlers[type] = handler;
       },
     },
@@ -182,13 +188,15 @@ test("quota and account views show reset balances, nearest expiries, unknown val
   });
   t.after(() => handlers.pagehide?.({ persisted: false }));
   const main = element("#main");
-  const rowFor = (id) =>
-    [
-      ...main.innerHTML.matchAll(
-        /<article class="account-row">[\s\S]*?<\/article>/g,
-      ),
-    ].find(([html]) => html.includes(`data-id="${id}"`))?.[0];
-  const assertAccountBalance = (id, text) => {
+  const rowFor = (id: string) =>
+    present(
+      [
+        ...main.innerHTML.matchAll(
+          /<article class="account-row">[\s\S]*?<\/article>/g,
+        ),
+      ].find(([html]) => html.includes(`data-id="${id}"`))?.[0],
+    );
+  const assertAccountBalance = (id: string, text: string) => {
     const row = rowFor(id);
     assert.ok(row, `missing row for ${id}: ${main.innerHTML}`);
     assert.equal(

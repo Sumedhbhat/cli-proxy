@@ -1,3 +1,5 @@
+import { recordQuota } from "./quota-history.ts";
+import { appendDiagnostic, reasonCode } from "./diagnostics.ts";
 import { Context, Effect, Layer, Ref, Semaphore } from "effect";
 import { AppConfig } from "./config.ts";
 import { Engine } from "./engine.ts";
@@ -160,6 +162,18 @@ export const makeApplication = Effect.gen(function* () {
             ),
       { concurrency: 3 },
     );
+    if (config.dataDir && !config.demo)
+      yield* Effect.try(() => recordQuota(config.dataDir, refreshed)).pipe(
+        Effect.catch((error) =>
+          Effect.tryPromise(() =>
+            appendDiagnostic(config.dataDir, "app", {
+              kind: "quota_history",
+              status: "error",
+              reason: reasonCode(error),
+            }),
+          ).pipe(Effect.catch(() => Effect.void)),
+        ),
+      );
     yield* update((s) => ({ ...s, accounts: refreshed }));
     yield* storage.saveQuota(
       refreshed.map(({ id, quota, quotaError }) => ({ id, quota, quotaError })),

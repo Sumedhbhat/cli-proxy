@@ -153,6 +153,7 @@ export const makeGateway = Effect.gen(function* () {
     identity: Identity,
     provider?: Provider,
     upgradeHead?: Buffer,
+    upgradeHeaders: Record<string, string> = {},
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -283,9 +284,10 @@ export const makeGateway = Effect.gen(function* () {
             res.destroy();
           });
           res.write(
-            `HTTP/1.1 101 Switching Protocols\r\n${Object.entries(
-              response.headers,
-            )
+            `HTTP/1.1 101 Switching Protocols\r\n${Object.entries({
+              ...response.headers,
+              ...upgradeHeaders,
+            })
               .filter(([k]) => k !== "set-cookie")
               .map(([k, v]) => `${k}: ${v}`)
               .join("\r\n")}\r\n\r\n`,
@@ -462,17 +464,27 @@ export const makeGateway = Effect.gen(function* () {
         ),
       );
     });
-  const upgrade = (req: http.IncomingMessage, socket: Duplex, head: Buffer) =>
+  const upgrade = (
+    req: http.IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    headers: Record<string, string>,
+  ) =>
     Effect.gen(function* () {
       const identity = config.demo ? null : yield* devices.identify(req);
       if (!identity) {
-        socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        socket.end(
+          `HTTP/1.1 401 Unauthorized\r\n${Object.entries(headers)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join("\r\n")}\r\nConnection: close\r\n\r\n`,
+        );
         return;
       }
       const limit = yield* app.codexLimit();
       if (limit) {
         const body = JSON.stringify({ error: codexLimitError(limit) });
-        const headers = {
+        const responseHeaders = {
+          ...headers,
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
           "Retry-After": Math.max(
@@ -484,7 +496,7 @@ export const makeGateway = Effect.gen(function* () {
           Connection: "close",
         };
         socket.end(
-          `HTTP/1.1 429 Too Many Requests\r\n${Object.entries(headers)
+          `HTTP/1.1 429 Too Many Requests\r\n${Object.entries(responseHeaders)
             .map(([k, v]) => `${k}: ${v}`)
             .join("\r\n")}\r\n\r\n${body}`,
         );
@@ -495,7 +507,7 @@ export const makeGateway = Effect.gen(function* () {
         return;
       }
       yield* count(identity, "codex", "websocket", 101, false);
-      yield* forward(req, socket, identity, undefined, head);
+      yield* forward(req, socket, identity, undefined, head, headers);
     });
   return { proxy, upgrade };
 });

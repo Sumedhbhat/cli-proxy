@@ -1,3 +1,4 @@
+import { records } from "../src/domain.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { filterModelCatalog } from "../src/model-catalog.ts";
@@ -14,11 +15,15 @@ test("missing ownership preserves genuine model IDs but never infers a synthetic
   };
   const owners = new Map([["alias", "openai"]]);
   assert.deepEqual(
-    filterModelCatalog(payload, "codex", owners).data.map((model) => model.id),
+    records(filterModelCatalog(payload, "codex", owners).data).map(
+      (model) => model.id,
+    ),
     ["gpt-6.1-sol", "alias"],
   );
   assert.deepEqual(
-    filterModelCatalog(payload, "claude", owners).data.map((model) => model.id),
+    records(filterModelCatalog(payload, "claude", owners).data).map(
+      (model) => model.id,
+    ),
     ["claude-opus-5-5"],
   );
 });

@@ -152,3 +152,95 @@ and [Claude settings precedence](https://code.claude.com/docs/en/settings), and
 are checked against the installed CLIs. Direct profiles require valid native
 provider login; subscription credentials imported into the proxy are not a
 substitute for that login.
+
+## Versioned diagnostics
+
+`npm run service:status` prints the selected and running release, Git commit,
+engine version, build digest, service restart counts, and last independent health
+heartbeat. Add `-- --json` for machine-readable output. An unhealthy service exits
+nonzero. This command uses the installed standalone controller, so missing
+application dependencies cannot prevent inspection.
+
+Every ordinary HTTP response and supported WebSocket handshake carries
+`X-CLI-Proxy-Release`, `X-CLI-Proxy-Commit`, `X-CLI-Proxy-Build`, and
+`X-CLI-Proxy-Request-ID`. `/healthz` also reports startup time and uptime. The
+release manifest records whether the source had uncommitted changes.
+
+Private structured logs live in `.local/diagnostics/`: `setup.jsonl`,
+`deploy.jsonl`, `health.jsonl`, and `app.jsonl`. Each rotates at 2 MiB and retains
+three prior segments. Events contain stages, sanitized failure codes, timing,
+response status and release identity. They do not include prompts, response
+bodies, query strings, credentials, or arbitrary exception text. Request IDs
+connect a response to its request event. Health records are independent of
+application request traffic. Logs survive release switches and rollbacks.
+
+Export a sanitized diagnostic report from the dashboard's Logs page or run:
+
+```sh
+npm run service:diagnostics -- --output=/tmp/cli-proxy-diagnostics.json
+```
+
+The export includes expected/running versions, service state and restarts, recent
+safe events, incident state, import status and heartbeat age. It never exports
+raw journal text or configuration secrets. There is still no external alert
+service. A stale heartbeat is reported separately from transport health.
+
+## Read-only usage recovery and collection
+
+The usage page shows weekly quota observations and daily usage above the summary
+cards. Project and conversation charts include token and value rankings,
+conversation counts, observations per conversation, model/token mix, and the
+distribution of tokens per task. A task means a whole T3 conversation. The mean,
+median, minimum, maximum, range, population variance and standard deviation use
+conversation totals in the selected date range. Conversations crossing range
+boundaries are partial. Unmapped native sessions are excluded from task statistics
+and counted explicitly in coverage.
+
+The importer reads T3's existing `userdata/usage-scan-cache-v*.json`, its saved
+`usage-model-rates.json`, and opens `statev2.sqlite` read-only for project and
+conversation attribution. Supported normalized cache versions are 9, 10 and 11;
+unknown versions fail instead of guessing. Global message deduplication prevents
+copied/streamed Claude usage from being counted twice. Reasoning is already part
+of output tokens and is never added twice. Parent session references group
+subagent usage into its T3 conversation when that mapping exists.
+
+```sh
+npm run history:import -- --month=all
+npm run history:import -- --month=2026-10
+```
+
+The second form also searches native CLI logs for retained quota observations.
+Use `--export=/path/metadata.json` to export only usage metadata, then
+`--file=/path/metadata.json` to import it on the service host. No prompts or
+message bodies are exported. Imports are idempotent and stored in the proxy's
+separate `.local/history.sqlite`. They never write to T3's cache, database,
+settings, or code, and never trigger a T3 scan. These commands do not install an
+engine on the machine performing an export.
+
+Setup installs `cli-proxy-history.timer`, which reads the existing T3 cache every
+five minutes. Its freshness depends on when T3 last scanned native usage. The
+proxy independently records weekly quota observations during each normal account
+refresh, including when the dashboard is closed. No historical quota curve is
+inferred from token counts: missing samples stay gaps, recovered snapshots with
+unknown accounts use dashed lines, and resets return toward 100% only when
+observed. Historical Claude token usage can exist without historical Claude
+quota percentages.
+
+T3-retained rates or reported costs supply API-equivalent values for the history
+charts. They are estimates, not subscription charges or proof of historical list
+prices. Missing rates remain unpriced. The gateway cards continue using the dated
+pricing catalog; historical observations before that catalog may be unpriced in
+those cards. Historical usage is combined with gateway totals only before the
+first gateway tracking day to avoid double counting. Account/device filters omit
+native history because T3 does not establish those identities. Dates use UTC;
+T3's local-time day boundaries can produce different daily totals.
+
+For an update that must leave all T3 settings untouched, use:
+
+```sh
+CLI_PROXY_SKIP_T3=1 npm run setup
+```
+
+This runs the same installation workflow while skipping T3 profile configuration.
+The history collector remains read-only. Normal CLI client configuration and
+independent recovery launcher installation still run.

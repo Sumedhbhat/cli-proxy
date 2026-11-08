@@ -1,10 +1,14 @@
 // "Usage & cost" page. Three separate figures, never mixed:
 // observed tokens, API-equivalent value (an estimate, not a charge), and
 // actual spending (only from billing records).
+import { topGraphs, projectGraphs } from "./usage-graphs.ts";
+import type { QuotaSample, NativeUsage } from "../src/quota-history.ts";
 import type { Totals, UsageReport } from "../src/usage-report.ts";
 
 type Row = Record<string, unknown>;
 export interface Report extends UsageReport {
+  readonly quotaHistory?: QuotaSample[];
+  readonly activity?: NativeUsage[];
   readonly generatedAt: string;
   readonly coverage: {
     readonly trackingStartedAt: string | null;
@@ -63,7 +67,7 @@ export const usageView: UsageView = {
   device: "",
   model: "",
   breakdown: "devices",
-  metric: "tokens",
+  metric: "value",
   newKey: null,
 };
 
@@ -480,12 +484,13 @@ export function usagePage(
     head +
     notices(report, h) +
     filters(report, h, view) +
+    topGraphs(report, h, view) +
     (empty
       ? `<div class="empty"><h2>No usage recorded ${report.coverage.trackingStartedAt ? "for these filters" : "yet"}</h2><p>${report.coverage.trackingStartedAt ? `The ledger has been recording since ${when(report.coverage.trackingStartedAt)}. Widen the range or clear filters.` : "Usage appears here once the engine's ledger plugin is loaded and requests pass through the gateway."}</p></div>`
       : figures(report) +
         providerCards(report, h) +
-        trendChart(report, h, view) +
         breakdownTable(report, h, view)) +
+    projectGraphs(report, h) +
     `<div class="grid-two">${coveragePanel(report, h)}${pricingPanel(report, h)}</div>` +
     `<div class="grid-two">${devicesPanel(report, h, view, gateway)}${billingPanel(report, h)}</div>` +
     explainer

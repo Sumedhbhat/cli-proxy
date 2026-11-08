@@ -173,7 +173,7 @@ The installed engine was started and its management API was checked. Browser che
 
 Claude and Codex have built-in quota probes. Other providers need a CLIProxyAPI quota plugin; their sample demo values do not imply live integration. The gateway supports the listed OpenAI-compatible endpoints and Anthropic Messages, including count-tokens. It does not expose every endpoint the engine offers.
 
-The activity log stores only the latest 200 operational events in memory. It records request paths, status, and timing, not prompts, tokens, or inference bodies. Token accounting lives in the separate usage ledger below. The rest of the video covers agent workflows and managing machines; see [the video review](docs/video-review.md) for the scope boundary.
+The activity log shows the latest 200 operational events. Private rotating diagnostic logs also persist setup stages, deployment changes, health heartbeats and request status/timing across restarts. Status and HTTP responses identify the running release, commit and build. Export a sanitized report with `npm run service:diagnostics` or the Logs page. See [deployment diagnostics](docs/deployment.md#versioned-diagnostics). Token accounting lives in the separate usage ledger below. The rest of the video covers agent workflows and managing machines; see [the video review](docs/video-review.md) for the scope boundary.
 
 Dashboard access has no separate login or session expiry. The app binds to loopback; Tailscale Serve provides access from your tailnet. Cross-origin dashboard writes are rejected.
 
@@ -185,9 +185,11 @@ Dashboard access has no separate login or session expiry. The app binds to loopb
 - **API-equivalent value** prices those tokens at public API list prices from a dated catalog. It is an estimate of what the traffic would cost as API usage. Subscription usage is not billed per token, so it is not what you paid.
 - **Actual spending** comes only from billing records you add or import: plan fees, credit purchases, and usage charges. Credit consumption is shown but never added again.
 
+The page starts with three graphs for Claude weekly quota, Codex weekly quota and daily usage value or tokens. More graphs compare projects, whole T3 conversations and models. Conversation token statistics include mean, median, minimum, maximum, range, variance and standard deviation. A read-only collector recovers T3's retained history and checks for new cached data every five minutes. Provider quota samples are recorded separately at every account refresh. See [history sources and coverage](docs/deployment.md#read-only-usage-recovery-and-collection) for gaps and pricing limits.
+
 A small engine plugin (`engine-plugin/`, Go standard library only) writes sanitized usage metadata to an append-only outbox; the console ingests it into `.local/accounting.sqlite`. Prompts, responses, credentials, and error bodies are never stored. Give each machine its own key under **Devices**; the gateway signs the device identity for the engine, so attribution never depends on IP addresses or client-supplied labels. Coverage starts when the ledger starts, and known gaps, such as Codex streams a client cancels, are shown on the page.
 
-Build the plugin with `npm run plugin:build` (Go 1.27.3 and a C compiler) before `npm run service:install`. Design, failure handling, the list of known gaps, pricing sources, billing import format, and deployment are in [the usage-ledger notes](docs/usage-ledger.md).
+`npm run setup` builds the plugin and deploys the complete service. It requires Go 1.26+ and a C compiler; the reviewed plugin toolchain is Go 1.27.3. Design, failure handling, the list of known gaps, pricing sources, billing import format, and deployment are in [the usage-ledger notes](docs/usage-ledger.md).
 
 ## Keep it running
 

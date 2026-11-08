@@ -377,3 +377,48 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* Charts share the existing provider colors and keep cards below the visual overview. */
+.workspace, main, #main, .grid-two > *, .actions, .usage-filters > * { min-width: 0; }
+.usage-graphs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px; }
+.usage-graphs h2 { font-size: 17px; margin: 0 0 12px; }
+.graph-number { font: 600 34px/1.2 var(--mono); letter-spacing: -1px; }
+.graph-number small { margin-left: 9px; font: 12px Poppins,sans-serif; letter-spacing: 0; color: var(--muted); }
+.graph-caption { min-height: 34px; color: var(--muted); font-size: 12px !important; margin: 9px 0; }
+.chart-empty { color: var(--muted); font-size: 13px; }
+.chart-tip { max-width: min(290px,100%); white-space: normal; overflow-wrap: anywhere; }
+.analytics-section > summary { margin-bottom: 20px; font-size: 20px; color: var(--text); }
+.analytics-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
+.analytics-grid .panel { margin-bottom: 0; }
+.analytics-bars h2, .task-distribution h2 { font-size: 18px; margin-top: 0; }
+.analytics-bars ol { list-style: none; padding: 0; margin: 20px 0 0; }
+.analytics-bars li { margin: 0 0 17px; }
+.analytics-bars li > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.analytics-bars li span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.analytics-bars li strong { flex-shrink: 0; font-family: var(--mono); font-weight: 500; }
+.analytics-bars small { font-size: 11px; color: var(--faint); }
+.metric-track { height: 6px; border-radius: 4px; background: var(--line); margin-top: 6px; }
+.metric-track i { display: block; height: 100%; border-radius: inherit; background: var(--green); }
+.task-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin: 20px 0; }
+.task-stats span { display: block; color: var(--muted); font-size: 12px; }
+.task-stats strong { font: 600 24px var(--mono); }
+@media (max-width: 1190px) { .usage-graphs { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 650px) {
+  html, body { max-width: 100%; }
+  .workspace, main, #main { max-width: 100%; }
+  .analytics-grid { grid-template-columns: minmax(0,1fr); }
+  .task-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .usage-filters label, .inline-form label { min-width: 0; max-width: 100%; }
+  .usage-filters select, .usage-filters input, .billing-form input, .inline-form input, textarea { min-width: 0; max-width: 100%; width: 100%; }
+  .page-head .actions, .section-head .actions, .legend { flex-wrap: wrap; }
+  .panel pre, .prose pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .field-row > * { min-width: 0; overflow-wrap: anywhere; }
+  .usage-table, .usage-table tbody { display: block; width: 100%; }
+  .usage-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .usage-table tr { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); border-bottom: 1px solid var(--line); padding: 10px 0; }
+  .usage-table td { display: block; padding: 7px 5px; text-align: left; border: 0; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+  .usage-table td::before { content: attr(data-label); display: block; color: var(--faint); font-size: 10px; margin-bottom: 3px; }
+  .table-scroll { overflow-x: visible; min-width: 0; max-width: 100%; }
+  #toast { max-width: calc(100vw - 24px); white-space: normal; overflow-wrap: anywhere; }
+}
+@media (max-width: 650px) { .tabs { flex-wrap: wrap; overflow-x: visible; gap: 10px 18px; } }

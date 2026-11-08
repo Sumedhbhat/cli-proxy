@@ -1,3 +1,4 @@
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -29,7 +30,7 @@ test(
     };
     const engine = http.createServer(async (req, res) => {
       for await (const _ of req);
-      const path = new URL(req.url, "http://local").pathname;
+      const path = new URL(req.url || "/", "http://local").pathname;
       res.setHeader("Content-Type", "application/json");
       if (path.endsWith("/auth-files"))
         res.end(
@@ -75,7 +76,7 @@ test(
     await once(engine, "listening");
     const probe = http.createServer().listen(0, "127.0.0.1");
     await once(probe, "listening");
-    const port = probe.address().port;
+    const port = address(probe).port;
     await new Promise((r) => probe.close(r));
     const dir = await mkdtemp(join(tmpdir(), "cli-proxy-codex-test-"));
     const child = spawn(process.execPath, ["src/server.ts"], {
@@ -83,7 +84,7 @@ test(
       env: {
         ...process.env,
         PORT: String(port),
-        ENGINE_URL: `http://127.0.0.1:${engine.address().port}`,
+        ENGINE_URL: `http://127.0.0.1:${address(engine).port}`,
         ENGINE_MANAGEMENT_KEY: "test-management",
         PROXY_API_KEY: "test-api",
         DATA_DIR: dir,
@@ -103,7 +104,7 @@ test(
       } catch {}
       await new Promise((r) => setTimeout(r, 30));
     }
-    const ask = (body) =>
+    const ask = (body: string) =>
       fetch(base + "/v1/responses", {
         method: "POST",
         headers: {
@@ -136,27 +137,31 @@ test(
     assert.equal((await large.json()).error.type, "usage_limit_reached");
 
     const upgrade = () =>
-      new Promise((resolve, reject) => {
-        const req = http.request(base + "/v1/responses", {
-          headers: {
-            Authorization: "Bearer test-api",
-            Connection: "Upgrade",
-            Upgrade: "websocket",
-            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-            "Sec-WebSocket-Version": "13",
-          },
-        });
-        req.on("error", reject);
-        req.on("upgrade", () => reject(new Error("unexpected upgrade")));
-        req.on("response", async (res) => {
-          let text = "";
-          for await (const chunk of res) text += chunk;
-          resolve({ res, text });
-        });
-        req.end();
-      });
+      new Promise<{ res: http.IncomingMessage; text: string }>(
+        (resolve, reject) => {
+          const req = http.request(base + "/v1/responses", {
+            headers: {
+              Authorization: "Bearer test-api",
+              Connection: "Upgrade",
+              Upgrade: "websocket",
+              "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+              "Sec-WebSocket-Version": "13",
+            },
+          });
+          req.on("error", reject);
+          req.on("upgrade", () => reject(new Error("unexpected upgrade")));
+          req.on("response", async (res) => {
+            let text = "";
+            for await (const chunk of res) text += chunk;
+            resolve({ res, text });
+          });
+          req.end();
+        },
+      );
     const refused = await upgrade();
     assert.equal(refused.res.statusCode, 429);
+    assert.ok(refused.res.headers["x-cli-proxy-release"]);
+    assert.ok(refused.res.headers["x-cli-proxy-request-id"]);
     assert.equal(JSON.parse(refused.text).error.type, "usage_limit_reached");
     assert.equal(refused.res.headers["x-codex-primary-used-percent"], "100");
     assert.equal(upgrades, 0);
@@ -183,16 +188,16 @@ test(
     // The startup refresh reads auth-files first; the upgrade's cooldown lookup is the
     // next read, held open so the client can reset while the gateway waits on it.
     let lookups = 0,
-      startupRead,
-      upgradeRead;
-    const startup = new Promise((r) => {
+      startupRead: () => void = () => assert.fail("startup callback missing"),
+      upgradeRead: () => void = () => assert.fail("upgrade callback missing");
+    const startup = new Promise<void>((r) => {
         startupRead = r;
       }),
-      upgradeLookup = new Promise((r) => {
+      upgradeLookup = new Promise<void>((r) => {
         upgradeRead = r;
       });
     const engine = http.createServer((req, res) => {
-      const path = new URL(req.url, "http://local").pathname;
+      const path = new URL(req.url || "/", "http://local").pathname;
       if (path.endsWith("/auth-files")) {
         if (++lookups === 1) {
           startupRead();
@@ -211,7 +216,7 @@ test(
     await once(engine, "listening");
     const probe = http.createServer().listen(0, "127.0.0.1");
     await once(probe, "listening");
-    const port = probe.address().port;
+    const port = address(probe).port;
     await new Promise((r) => probe.close(r));
     const dir = await mkdtemp(join(tmpdir(), "cli-proxy-reset-test-"));
     const child = spawn(process.execPath, ["src/server.ts"], {
@@ -219,7 +224,7 @@ test(
       env: {
         ...process.env,
         PORT: String(port),
-        ENGINE_URL: `http://127.0.0.1:${engine.address().port}`,
+        ENGINE_URL: `http://127.0.0.1:${address(engine).port}`,
         ENGINE_MANAGEMENT_KEY: "test-management",
         PROXY_API_KEY: "test-api",
         DATA_DIR: dir,

@@ -1,3 +1,4 @@
+import { address } from "./test-helpers.ts";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -6,12 +7,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export async function startGateway(
-  t,
-  handler,
+  t: import("node:test").TestContext,
+  handler: http.RequestListener,
   settings = { scheduler: false, intervalSeconds: 3600 },
 ) {
   const engine = http.createServer(handler);
-  const engineSockets = new Set();
+  const engineSockets = new Set<import("node:net").Socket>();
   engine.on("connection", (socket) => {
     engineSockets.add(socket);
     socket.once("close", () => engineSockets.delete(socket));
@@ -25,7 +26,7 @@ export async function startGateway(
       ...process.env,
       PORT: "0",
       DATA_DIR: dataDir,
-      ENGINE_URL: `http://127.0.0.1:${engine.address().port}`,
+      ENGINE_URL: `http://127.0.0.1:${address(engine).port}`,
       ENGINE_MANAGEMENT_KEY: "management-test",
       PROXY_API_KEY: "proxy-test",
     },
@@ -50,11 +51,13 @@ export async function startGateway(
       }),
     ]);
     for (const socket of engineSockets) socket.destroy();
-    await new Promise((resolve) => engine.close(resolve));
+    await new Promise<void>((resolve, reject) =>
+      engine.close((error) => (error ? reject(error) : resolve())),
+    );
     await rm(dataDir, { recursive: true, force: true });
   });
   const base = await Promise.race([
-    new Promise((resolve) =>
+    new Promise<string>((resolve) =>
       child.stdout.on("data", (chunk) => {
         const match = /http:\/\/127\.0\.0\.1:\d+/.exec(String(chunk));
         if (match) resolve(match[0]);

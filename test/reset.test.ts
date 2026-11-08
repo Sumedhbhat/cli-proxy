@@ -1,11 +1,17 @@
+import { present } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nearestReset, nearestResetInfo, rankAccounts } from "../src/quota.ts";
 test("reset selection separates providers and waits for all exhausted windows", () => {
   const now = Date.now();
-  const account = (provider, times, extra = {}) => ({
+  const account = (provider: string, times: number[], extra = {}) => ({
+    id: provider,
+    name: provider + ".json",
     provider,
     quota: {
+      plan: null,
+      availableResets: null,
+      nextResetExpiresAt: null,
       fetchedAt: new Date(now).toISOString(),
       windows: times.map((seconds) => ({
         id: "five_hour",
@@ -23,11 +29,11 @@ test("reset selection separates providers and waits for all exhausted windows", 
     account("claude", [1], { disabled: true }),
   ];
   assert.equal(
-    Date.parse(nearestReset(accounts, "claude-opus-5-5", now)),
+    Date.parse(present(nearestReset(accounts, "claude-opus-5-5", now))),
     now + 60000,
   );
   assert.equal(
-    Date.parse(nearestReset(accounts, "gpt-6.1-sol", now)),
+    Date.parse(present(nearestReset(accounts, "gpt-6.1-sol", now))),
     now + 20000,
   );
   assert.equal(nearestReset(accounts, "unknown", now), null);
@@ -37,6 +43,9 @@ test("reset selection separates providers and waits for all exhausted windows", 
 test("cached Claude resets outlive quota freshness without refreshing utilization", () => {
   const now = Date.now();
   const quota = {
+    plan: null,
+    availableResets: null,
+    nextResetExpiresAt: null,
     fetchedAt: new Date(now - 3600000).toISOString(),
     windows: [
       {
@@ -65,12 +74,9 @@ test("cached Claude resets outlive quota freshness without refreshing utilizatio
     null,
   );
   // A persisted snapshot can also be used before the first refresh completes.
+  const withoutQuotaError = { ...claude, quotaError: undefined };
   assert.equal(
-    nearestReset(
-      [{ ...claude, quotaError: undefined }],
-      "claude-opus-5-5",
-      now,
-    ),
+    nearestReset([withoutQuotaError], "claude-opus-5-5", now),
     quota.windows[0].resetsAt,
   );
   assert.equal(nearestReset([claude], "claude-opus-5-5", now + 86400000), null);
@@ -80,15 +86,20 @@ test("cached Claude resets keep waiting for future blockers after shorter window
   const now = Date.now(),
     reset = new Date(now + 3600000).toISOString();
   const account = {
+    id: "claude",
+    name: "claude.json",
     provider: "claude",
     quota: {
+      plan: null,
+      availableResets: null,
+      nextResetExpiresAt: null,
       fetchedAt: new Date(now - 3600000).toISOString(),
       windows: [
         {
           id: "five_hour",
           label: "5-hour limit",
           remaining: 0,
-          resetsAt: new Date(now - 60000).toISOString(),
+          resetsAt: new Date(now - 60000).toISOString() as string | null,
         },
         {
           id: "seven_day",
@@ -112,8 +123,13 @@ test("cached Claude reset selection ignores disabled accounts and unrelated mode
   const now = Date.now(),
     reset = new Date(now + 3600000).toISOString();
   const account = {
+    id: "claude",
+    name: "claude.json",
     provider: "claude",
     quota: {
+      plan: null,
+      availableResets: null,
+      nextResetExpiresAt: null,
       fetchedAt: new Date(now - 3600000).toISOString(),
       windows: [
         {

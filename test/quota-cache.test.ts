@@ -1,3 +1,7 @@
+import { dashboard, present } from "./test-helpers.ts";
+import { record } from "../src/domain.ts";
+import type { Quota, Account } from "../src/domain.ts";
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -16,15 +20,15 @@ test(
       reset = new Date(Date.now() + 3600000).toISOString(),
       resetsLeft = 2;
     const expiresAt = new Date(Date.now() + 86400000).toISOString();
-    const calls = { plugin: 0, direct: 0, missing: 0 };
+    const calls: Record<string, number> = { plugin: 0, direct: 0, missing: 0 };
     const dir = await mkdtemp(join(tmpdir(), "cli-proxy-cache-test-"));
     await writeFile(
       join(dir, "settings.json"),
       JSON.stringify({ intervalSeconds: 3600 }),
     );
-    let child,
-      accountsGate = null,
-      releaseAccounts;
+    let child: ReturnType<typeof spawn> | null | undefined,
+      accountsGate: Promise<void> | null = null,
+      releaseAccounts: () => void = () => assert.fail("missing callback");
     const stop = async () => {
       if (!child || child.exitCode !== null) return;
       const exited = once(child, "exit");
@@ -36,7 +40,7 @@ test(
       let raw = "";
       for await (const chunk of req) raw += chunk;
       const body = raw ? JSON.parse(raw) : {},
-        path = new URL(req.url, "http://local").pathname;
+        path = new URL(req.url || "/", "http://local").pathname;
       res.setHeader("Content-Type", "application/json");
       if (path.endsWith("/auth-files")) {
         await accountsGate;
@@ -119,11 +123,11 @@ test(
     await once(engine, "listening");
     const probe = http.createServer().listen(0, "127.0.0.1");
     await once(probe, "listening");
-    const port = probe.address().port;
+    const port = address(probe).port;
     await new Promise((resolve) => probe.close(resolve));
     const base = `http://127.0.0.1:${port}`,
       cachePath = join(dir, "quota-cache.json");
-    const state = async () => (await fetch(base + "/api/state")).json();
+    const state = async () => dashboard(await fetch(base + "/api/state"));
     const waitForState = async (waitForRefresh = true) => {
       for (let i = 0; i < 100; i++) {
         try {
@@ -141,7 +145,7 @@ test(
         env: {
           ...process.env,
           PORT: String(port),
-          ENGINE_URL: `http://127.0.0.1:${engine.address().port}`,
+          ENGINE_URL: `http://127.0.0.1:${address(engine).port}`,
           ENGINE_MANAGEMENT_KEY: "test-management",
           PROXY_API_KEY: "test-api",
           DATA_DIR: dir,
@@ -150,7 +154,7 @@ test(
       });
       return waitForState(waitForRefresh);
     };
-    const refresh = async (id) => {
+    const refresh = async (id?: string) => {
       const response = await fetch(base + "/api/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -160,7 +164,7 @@ test(
       assert.equal((await response.json()).ok, true);
       return state();
     };
-    const assertReset = async (expected) => {
+    const assertReset = async (expected: string | undefined) => {
       const response = await fetch(base + "/v1/messages", {
         method: "POST",
         headers: {
@@ -195,7 +199,8 @@ test(
           message: { content: [{ type: "text", text: error.message }] },
         });
         assert.equal(
-          frame.api_error_params.rate_limit_info.resetsAt,
+          record(record(record(frame).api_error_params).rate_limit_info)
+            .resetsAt,
           Date.parse(expected) / 1000,
         );
       } else assert.equal(error.message, "All credentials cooling down");
@@ -205,18 +210,21 @@ test(
     const cached = new Map(snapshot.accounts.map((a) => [a.id, a.quota]));
     assert.deepEqual(calls, { plugin: 1, direct: 1, missing: 1 });
     assert.equal(cached.get("missing"), null);
-    assert.equal(cached.get("plugin").availableResets, 2);
-    assert.equal(cached.get("direct").availableResets, 2);
-    assert.equal(cached.get("plugin").nextResetExpiresAt, expiresAt);
-    assert.equal(cached.get("direct").nextResetExpiresAt, expiresAt);
-    assert.ok(snapshot.accounts.find((a) => a.id === "missing").quotaError);
+    assert.equal(present(cached.get("plugin")).availableResets, 2);
+    assert.equal(present(cached.get("direct")).availableResets, 2);
+    assert.equal(present(cached.get("plugin")).nextResetExpiresAt, expiresAt);
+    assert.equal(present(cached.get("direct")).nextResetExpiresAt, expiresAt);
+    assert.ok(
+      present(snapshot.accounts.find((a) => a.id === "missing")).quotaError,
+    );
     await assertReset(reset);
 
     for (mode of ["http", "malformed", "unsupported", "network"]) {
-      const before = { ...calls };
+      const before: Record<string, number> = { ...calls };
       snapshot = await refresh();
+      const after: Record<string, number> = { ...calls };
       for (const account of snapshot.accounts) {
-        assert.equal(calls[account.id], before[account.id] + 1);
+        assert.equal(after[account.id], before[account.id] + 1);
         assert.deepEqual(account.quota, cached.get(account.id));
         assert.ok(account.quotaError);
       }
@@ -235,7 +243,9 @@ test(
       snapshot.accounts.map((a) => [a.id, a.quotaError]),
     );
     await stop();
-    const disk = JSON.parse(await readFile(cachePath, "utf8"));
+    const disk: Array<{ quota: { fetchedAt: string } | null }> = JSON.parse(
+      await readFile(cachePath, "utf8"),
+    );
     assert.deepEqual(
       disk.map((a) => a.quota),
       [...cached.values()],
@@ -247,7 +257,7 @@ test(
     });
     await writeFile(cachePath, JSON.stringify(disk));
     // Keep the startup refresh pending so it cannot replace the restored error state.
-    accountsGate = new Promise((resolve) => {
+    accountsGate = new Promise<void>((resolve) => {
       releaseAccounts = resolve;
     });
     snapshot = await start(false);
@@ -268,12 +278,15 @@ test(
     accountsGate = null;
     snapshot = await waitForState();
     for (const account of snapshot.accounts.filter((a) => a.quota)) {
-      assert.equal(account.quota.fetchedAt, fetchedAt);
+      assert.equal(present(account.quota).fetchedAt, fetchedAt);
       assert.equal(
-        account.quota.availableResets,
-        cached.get(account.id).availableResets,
+        present(account.quota).availableResets,
+        present(cached.get(account.id)).availableResets,
       );
-      assert.equal(snapshot.ranks.find((r) => r.id === account.id).priority, 0);
+      assert.equal(
+        present(snapshot.ranks.find((r) => r.id === account.id)).priority,
+        0,
+      );
     }
     await assertReset(reset);
 
@@ -282,10 +295,10 @@ test(
     resetsLeft = 0;
     snapshot = await refresh();
     for (const account of snapshot.accounts.filter((a) => a.quota)) {
-      assert.equal(account.quota.windows[0].resetsAt, reset);
-      assert.equal(account.quota.availableResets, 0);
-      assert.equal(account.quota.nextResetExpiresAt, null);
-      assert.notEqual(account.quota.fetchedAt, fetchedAt);
+      assert.equal(present(account.quota).windows[0].resetsAt, reset);
+      assert.equal(present(account.quota).availableResets, 0);
+      assert.equal(present(account.quota).nextResetExpiresAt, null);
+      assert.notEqual(present(account.quota).fetchedAt, fetchedAt);
       assert.equal(account.quotaError, null);
     }
     await assertReset(reset);

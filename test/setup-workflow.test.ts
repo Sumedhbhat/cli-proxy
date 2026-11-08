@@ -150,3 +150,15 @@ test("unsupported platforms and installed release directories are rejected befor
   );
   assert.equal(f.calls.length, 0);
 });
+
+test("read-only T3 mode never passes a T3 settings path to client or recovery setup", async (t) => {
+  const f = await fixture(t);
+  await runSetup(f.source, {
+    env: { ...f.env, CLI_PROXY_SKIP_T3: "1" },
+    platform: "linux",
+    run: f.run,
+  });
+  assert.ok(!f.calls.flat().some((v) => v.startsWith("--t3-settings")));
+  assert.ok(!f.calls.flat().includes("--configure-proxy"));
+  assert.equal(await fs.readFile(f.env.CLI_PROXY_T3_SETTINGS, "utf8"), "{}");
+});

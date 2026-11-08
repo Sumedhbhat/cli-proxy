@@ -11,10 +11,13 @@ import { promisify } from "node:util";
 // next to it (versions/2.1.314) and never rewrites that path, so T3 kept running and showing
 // 2.1.310 after every update. A path inside the versions directory must follow updates.
 const run = promisify(execFile);
-const fake = (path, output) =>
+const fake = (path: string, output: string) =>
   writeFile(path, `#!/bin/sh\necho "${output}"\n`, { mode: 0o700 });
 
-async function launch(t, setup) {
+async function launch(
+  t: import("node:test").TestContext,
+  setup: (dir: string) => Promise<string>,
+) {
   const dir = await mkdtemp(join(tmpdir(), "cli-proxy-claude-binary-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const binary = await setup(dir);

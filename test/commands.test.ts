@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const run = promisify(execFile);
-const temporary = async (t) => {
+const temporary = async (t: import("node:test").TestContext) => {
   const dir = await mkdtemp(join(tmpdir(), "cli-proxy-commands-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
@@ -53,7 +53,7 @@ test(
       preload,
       'import os from "node:os"; import {syncBuiltinESMExports} from "node:module"; os.homedir=()=>process.env.CLI_PROXY_TEST_USER; syncBuiltinESMExports();',
     );
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       XDG_DATA_HOME: join(dir, "data"),
       CLI_PROXY_TEST_USER: home,
@@ -95,7 +95,7 @@ test(
   },
 );
 
-async function installationFixture(t) {
+async function installationFixture(t: import("node:test").TestContext) {
   const dir = await temporary(t),
     source = join(dir, "source");
   await mkdir(source);
@@ -216,7 +216,7 @@ test(
       unrelated: true,
     };
     await writeFile(settingsPath, JSON.stringify(original));
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       XDG_DATA_HOME: join(dir, "data"),
       CLI_PROXY_CLIENT_HOME: home,
@@ -240,12 +240,13 @@ test(
       assert.equal(settings.providerInstances.claudeDirect.enabled, true);
       assert.ok(
         settings.providerInstances.claudeAgent.environment.some(
-          (row) => row.name === "KEEP" && row.value === "yes",
+          (row: { name: string; value: string; sensitive: boolean }) =>
+            row.name === "KEEP" && row.value === "yes",
         ),
       );
       assert.ok(
         settings.providerInstances.claudeAgent.environment.some(
-          (row) =>
+          (row: { name: string; value: string; sensitive: boolean }) =>
             row.name === "ANTHROPIC_BASE_URL" &&
             row.value === "http://127.0.0.1:9918/claude" &&
             row.sensitive === false,
@@ -257,7 +258,7 @@ test(
       );
       assert.ok(args.includes('model_provider="openai_token_sharing"'));
       assert.ok(
-        args.some((arg) =>
+        args.some((arg: string) =>
           arg.includes('base_url="http://127.0.0.1:9918/codex/v1"'),
         ),
       );
@@ -342,7 +343,9 @@ for (const validChecksum of [true, false]) {
       } else {
         await assert.rejects(setup, (error) => {
           assert.match(
-            error.stdout + error.stderr,
+            error instanceof Error && "stdout" in error && "stderr" in error
+              ? String(error.stdout) + String(error.stderr)
+              : String(error),
             /Engine checksum verification failed/,
           );
           return true;

@@ -410,9 +410,11 @@ function routingPage() {
 }
 function logsPage() {
   return (
-    heading('<button class="button" data-action="reload">↻ Refresh</button>') +
+    heading(
+      '<a class="button" href="./api/diagnostics" download>Export diagnostics</a><button class="button" data-action="reload">↻ Refresh</button>',
+    ) +
     notices() +
-    '<div class="notice">Only request paths, status codes, timing, and operational events are kept. This in-memory log holds the latest 200 entries and clears on restart.</div>' +
+    '<div class="notice">Only request paths, status codes, timing, and operational events are kept. This view shows the latest 200 entries. Versioned request and health diagnostics are also retained in rotating logs; export them above.</div>' +
     (state.events.length
       ? state.events
           .map(
@@ -427,7 +429,7 @@ function startPage() {
   return (
     heading() +
     notices() +
-    `<div class="grid-two"><section class="panel prose"><h2>1. Prepare the gateway</h2><p>Requires Node.js 24+ and Linux or macOS. Run these commands in this repository.</p><pre>npm ci\nnpm run setup\nnpm run engine</pre><p>Setup downloads CLIProxyAPI v8.0.59, verifies its checksum, and creates private local configuration. Run the console in a second terminal.</p><pre>npm start</pre><p>Open <code>http://127.0.0.1:8318</code>, or use your tailnet URL from another device. The dashboard opens directly without a console key.</p><h2>2. Connect your accounts</h2><p>Open Connect account, complete OAuth, then refresh quotas. You can also import existing CLIProxyAPI credential files. Codex credentials can enable upstream WebSockets by adding <code>"websockets": true</code> to their engine credential JSON.</p><a class="button small" href="#connect">Connect account</a></section><section class="panel prose"><h2>3. Point your coding clients here</h2><p>Use your <code>PROXY_API_KEY</code> from <code>.env</code> as the client key. Keep it separate from the engine management key.</p><p>Claude Code base URL</p><pre>ANTHROPIC_BASE_URL=${esc(gatewayOrigin)}\nANTHROPIC_AUTH_TOKEN=&lt;PROXY_API_KEY&gt;</pre><p>OpenAI-compatible / Codex provider base URL</p><pre>${esc(gatewayOrigin)}/v1</pre><p>Set the provider to the Responses wire API in Codex. Use a model ID available from <code>/v1/models</code>. The gateway forwards HTTP streaming and WebSocket upgrades at <code>/v1/responses</code>.</p><h2>4. Reach it over your tailnet</h2><p>Keep the engine and console on one always-on machine. Bind both to loopback and expose the console at a dedicated path on your Tailscale HTTPS address.</p><pre>tailscale serve --bg --https=443 --set-path=/cli-proxy/ http://127.0.0.1:8318</pre><p>Open the returned address with its trailing slash: <code>/cli-proxy/</code>. The existing T3 root and <code>/pages</code> routes stay available. Tailscale controls dashboard access. Coding clients still need the gateway API key.</p></section></div><section class="panel prose"><h2>How this relates to the video</h2><p>The proxy-specific features are implemented here: a consolidated quota view, reset-first priorities, account affinity, one gateway endpoint, and a loopback-first deployment. CLIProxyAPI owns OAuth refresh, model translation, inference, cooldowns, and provider WebSockets. The rest of the video covers agent workflows and machine management, which are outside this proxy.</p><p><a class="inline-link" href="https://www.youtube.com/watch?v=D8PikZ1KhUo" target="_blank" rel="noreferrer">Theo’s video</a> · <a class="inline-link" href="https://github.com/router-for-me/CLIProxyAPI" target="_blank" rel="noreferrer">CLIProxyAPI</a></p></section>`
+    `<div class="grid-two"><section class="panel prose"><h2>1. Prepare the gateway</h2><p>Requires Node.js 24+ and Linux with systemd. Run these commands in this repository.</p><pre>npm run setup</pre><p>Setup downloads CLIProxyAPI v8.0.59, verifies its checksum, and creates private local configuration. Setup builds, deploys, configures clients and verifies services automatically.</p><p>Open <code>http://127.0.0.1:8318</code>, or use your tailnet URL from another device. The dashboard opens directly without a console key.</p><h2>2. Connect your accounts</h2><p>Open Connect account, complete OAuth, then refresh quotas. You can also import existing CLIProxyAPI credential files. Codex credentials can enable upstream WebSockets by adding <code>"websockets": true</code> to their engine credential JSON.</p><a class="button small" href="#connect">Connect account</a></section><section class="panel prose"><h2>3. Point your coding clients here</h2><p>Use your <code>PROXY_API_KEY</code> from <code>.env</code> as the client key. Keep it separate from the engine management key.</p><p>Claude Code base URL</p><pre>ANTHROPIC_BASE_URL=${esc(gatewayOrigin)}\nANTHROPIC_AUTH_TOKEN=&lt;PROXY_API_KEY&gt;</pre><p>OpenAI-compatible / Codex provider base URL</p><pre>${esc(gatewayOrigin)}/v1</pre><p>Set the provider to the Responses wire API in Codex. Use a model ID available from <code>/v1/models</code>. The gateway forwards HTTP streaming and WebSocket upgrades at <code>/v1/responses</code>.</p><h2>4. Reach it over your tailnet</h2><p>Keep the engine and console on one always-on machine. Bind both to loopback and expose the console at a dedicated path on your Tailscale HTTPS address.</p><pre>tailscale serve --bg --https=443 --set-path=/cli-proxy/ http://127.0.0.1:8318</pre><p>Open the returned address with its trailing slash: <code>/cli-proxy/</code>. The existing T3 root and <code>/pages</code> routes stay available. Tailscale controls dashboard access. Coding clients still need the gateway API key.</p></section></div><section class="panel prose"><h2>How this relates to the video</h2><p>The proxy-specific features are implemented here: a consolidated quota view, reset-first priorities, account affinity, one gateway endpoint, and a loopback-first deployment. CLIProxyAPI owns OAuth refresh, model translation, inference, cooldowns, and provider WebSockets. The rest of the video covers agent workflows and machine management, which are outside this proxy.</p><p><a class="inline-link" href="https://www.youtube.com/watch?v=D8PikZ1KhUo" target="_blank" rel="noreferrer">Theo’s video</a> · <a class="inline-link" href="https://github.com/router-for-me/CLIProxyAPI" target="_blank" rel="noreferrer">CLIProxyAPI</a></p></section>`
   );
 }
 function render() {
@@ -470,6 +472,17 @@ function render() {
         ),
     } as Record<string, () => string>
   )[page]();
+  if (page === "usage")
+    main.querySelectorAll<HTMLTableElement>(".usage-table").forEach((table) => {
+      const labels = [...table.querySelectorAll("thead th")].map(
+        (th) => th.textContent || "",
+      );
+      table.querySelectorAll("tbody tr").forEach((row) =>
+        [...row.children].forEach((cell, i) => {
+          (cell as HTMLElement).dataset.label = labels[i] || "";
+        }),
+      );
+    });
 }
 const runtime = ManagedRuntime.make(Layer.empty);
 let usageReport: Report | null = null;
@@ -830,8 +843,15 @@ main.addEventListener("submit", (e) =>
 // One tooltip for the trend chart; bars and their wider hit areas share it.
 const showTip = (e: Event) => {
   const day = (e.target as Element).closest<SVGGElement>(".trend-day");
-  const tip = main.querySelector<HTMLElement>(".chart-tip");
-  if (!tip) return;
+  const tip = day
+    ?.closest(".chart-wrap")
+    ?.querySelector<HTMLElement>(".chart-tip");
+  if (!tip) {
+    main.querySelectorAll<HTMLElement>(".chart-tip").forEach((t) => {
+      t.hidden = true;
+    });
+    return;
+  }
   if (!day) {
     tip.hidden = true;
     return;
@@ -844,9 +864,11 @@ const showTip = (e: Event) => {
 };
 main.addEventListener("mouseover", showTip);
 main.addEventListener("focusin", showTip);
+main.addEventListener("pointerdown", showTip);
 main.addEventListener("mouseleave", () => {
-  const tip = main.querySelector<HTMLElement>(".chart-tip");
-  if (tip) tip.hidden = true;
+  main.querySelectorAll<HTMLElement>(".chart-tip").forEach((tip) => {
+    tip.hidden = true;
+  });
 });
 const initialState = $("#initial-state")?.textContent;
 await runtime.runPromise(

@@ -1,22 +1,24 @@
+import { dashboard } from "./test-helpers.ts";
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { once } from "node:events";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { startGateway } from "./server-fixture.js";
+import { startGateway } from "./server-fixture.ts";
 
-const defaults = (req, res) => {
-  if (req.url.endsWith("/auth-files")) {
+const defaults = (req: http.IncomingMessage, res: http.ServerResponse) => {
+  if (req.url?.endsWith("/auth-files")) {
     res.end('{"files":[]}');
     return true;
   }
-  if (req.url.endsWith("/config")) {
+  if (req.url?.endsWith("/config")) {
     res.end('{"routing":{}}');
     return true;
   }
   return false;
 };
-const waitFor = async (predicate) => {
+const waitFor = async (predicate: () => boolean | Promise<boolean>) => {
   for (let i = 0; i < 100; i++) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -29,24 +31,32 @@ test(
   { timeout: 10000 },
   async (t) => {
     let leaked = false;
-    const other = http.createServer((req, res) => {
-      leaked = true;
-      res.end("leaked");
-    });
+    const other = http.createServer(
+      (req: http.IncomingMessage, res: http.ServerResponse) => {
+        leaked = true;
+        res.end("leaked");
+      },
+    );
     other.listen(0, "127.0.0.1");
     await once(other, "listening");
     t.after(() => new Promise((resolve) => other.close(resolve)));
-    const { base } = await startGateway(t, (req, res) => {
-      if (defaults(req, res)) return;
-      assert.equal(req.url, "/v1/models?x=1");
-      assert.equal(req.headers.authorization, "Bearer proxy-test");
-      res.end('{"data":[]}');
-    });
+    const { base } = await startGateway(
+      t,
+      (req: http.IncomingMessage, res: http.ServerResponse) => {
+        if (defaults(req, res)) return;
+        assert.equal(req.url, "/v1/models?x=1");
+        assert.equal(req.headers.authorization, "Bearer proxy-test");
+        res.end('{"data":[]}');
+      },
+    );
     for (const target of [
-      `http://127.0.0.1:${other.address().port}/v1/models?x=1`,
-      `//127.0.0.1:${other.address().port}/v1/models?x=1`,
+      `http://127.0.0.1:${address(other).port}/v1/models?x=1`,
+      `//127.0.0.1:${address(other).port}/v1/models?x=1`,
     ]) {
-      const result = await new Promise((resolve, reject) => {
+      const result = await new Promise<{
+        status: number | undefined;
+        text: string;
+      }>((resolve, reject) => {
         const req = http.request(
           base,
           { path: target, headers: { Authorization: "Bearer proxy-test" } },
@@ -70,17 +80,20 @@ test(
   "disconnecting a streaming client cancels its upstream without stopping the gateway",
   { timeout: 10000 },
   async (t) => {
-    let upstreamClosed;
-    const closed = new Promise((resolve) => {
+    let upstreamClosed: () => void = () => assert.fail("missing callback");
+    const closed = new Promise<void>((resolve) => {
       upstreamClosed = resolve;
     });
-    const { base } = await startGateway(t, (req, res) => {
-      if (defaults(req, res)) return;
-      res.writeHead(200, { "Content-Type": "text/event-stream" });
-      res.write("data: started\n\n");
-      res.once("close", upstreamClosed);
-    });
-    await new Promise((resolve, reject) => {
+    const { base } = await startGateway(
+      t,
+      (req: http.IncomingMessage, res: http.ServerResponse) => {
+        if (defaults(req, res)) return;
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.write("data: started\n\n");
+        res.once("close", upstreamClosed);
+      },
+    );
+    await new Promise<void>((resolve, reject) => {
       const req = http.get(
         base + "/v1/responses",
         { headers: { Authorization: "Bearer proxy-test" } },
@@ -105,64 +118,67 @@ test(
     let inFlight = 0,
       maximum = 0,
       quotaCalls = 0,
-      release;
-    let gate = null;
-    const patches = [];
-    const { base, dataDir } = await startGateway(t, async (req, res) => {
-      let text = "";
-      for await (const chunk of req) text += chunk;
-      const body = text ? JSON.parse(text) : {};
-      if (req.url.endsWith("/auth-files")) {
-        res.end(
-          JSON.stringify({
-            files: Array.from({ length: 7 }, (_, i) => ({
-              name: `${i}.json`,
-              auth_index: String(i + 1),
-              provider: "codex",
-              supports_quota: true,
-              priority: 42,
-            })),
-          }),
-        );
-        return;
-      }
-      if (req.url.endsWith("/config")) {
-        res.end(
-          '{"routing":{"strategy":"fill-first","session-affinity":true}}',
-        );
-        return;
-      }
-      if (req.url.endsWith("/quota/fetch")) {
-        quotaCalls++;
-        maximum = Math.max(maximum, ++inFlight);
-        await gate;
-        res.end(
-          JSON.stringify({
-            rate_limit: {
-              weekly: {
-                used_percent: 10,
-                limit_window_seconds: 604800,
-                reset_at: (Date.now() + 86400000) / 1000,
+      release: () => void = () => assert.fail("missing callback");
+    let gate: Promise<void> | null = null;
+    const patches: Array<Record<string, unknown>> = [];
+    const { base, dataDir } = await startGateway(
+      t,
+      async (req: http.IncomingMessage, res: http.ServerResponse) => {
+        let text = "";
+        for await (const chunk of req) text += chunk;
+        const body = text ? JSON.parse(text) : {};
+        if (req.url?.endsWith("/auth-files")) {
+          res.end(
+            JSON.stringify({
+              files: Array.from({ length: 7 }, (_, i) => ({
+                name: `${i}.json`,
+                auth_index: String(i + 1),
+                provider: "codex",
+                supports_quota: true,
+                priority: 42,
+              })),
+            }),
+          );
+          return;
+        }
+        if (req.url?.endsWith("/config")) {
+          res.end(
+            '{"routing":{"strategy":"fill-first","session-affinity":true}}',
+          );
+          return;
+        }
+        if (req.url?.endsWith("/quota/fetch")) {
+          quotaCalls++;
+          maximum = Math.max(maximum, ++inFlight);
+          await gate;
+          res.end(
+            JSON.stringify({
+              rate_limit: {
+                weekly: {
+                  used_percent: 10,
+                  limit_window_seconds: 604800,
+                  reset_at: (Date.now() + 86400000) / 1000,
+                },
               },
-            },
-          }),
-        );
-        inFlight--;
-        return;
-      }
-      if (req.url.endsWith("/fields")) {
-        patches.push(body);
+            }),
+          );
+          inFlight--;
+          return;
+        }
+        if (req.url?.endsWith("/fields")) {
+          patches.push(body);
+          res.end("{}");
+          return;
+        }
+        res.writeHead(404);
         res.end("{}");
-        return;
-      }
-      res.writeHead(404);
-      res.end("{}");
-    });
+      },
+    );
     await waitFor(
       async () => (await (await fetch(base + "/api/state")).json()).lastRefresh,
     );
     quotaCalls = 0;
-    gate = new Promise((resolve) => {
+    gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     t.after(() => release());
@@ -175,7 +191,7 @@ test(
     await Promise.all(requests);
     assert.equal(maximum, 3);
     assert.equal(quotaCalls, 7);
-    const put = (scheduler) =>
+    const put = (scheduler: boolean) =>
       fetch(base + "/api/settings", {
         method: "PUT",
         body: JSON.stringify({ scheduler }),
@@ -183,7 +199,7 @@ test(
     assert.equal((await put(true)).status, 200);
     assert.equal((await put(false)).status, 200);
     assert.equal((await put(true)).status, 200);
-    const backup = JSON.parse(
+    const backup: Array<{ priority: number }> = JSON.parse(
       await readFile(`${dataDir}/priorities-backup.json`, "utf8"),
     );
     assert.equal(backup.length, 7);
@@ -201,9 +217,12 @@ test(
   "request boundaries reject invalid JSON values without changing scheduler state",
   { timeout: 10000 },
   async (t) => {
-    const { base } = await startGateway(t, (req, res) => {
-      if (!defaults(req, res)) res.end("{}");
-    });
+    const { base } = await startGateway(
+      t,
+      (req: http.IncomingMessage, res: http.ServerResponse) => {
+        if (!defaults(req, res)) res.end("{}");
+      },
+    );
     for (const body of [
       "null",
       "[]",
@@ -237,13 +256,16 @@ test(
   "malformed unauthenticated upgrade targets return 400 without stopping the gateway",
   { timeout: 10000 },
   async (t) => {
-    const { base, child } = await startGateway(t, (req, res) => {
-      if (!defaults(req, res)) res.end("{}");
-    });
+    const { base, child } = await startGateway(
+      t,
+      (req: http.IncomingMessage, res: http.ServerResponse) => {
+        if (!defaults(req, res)) res.end("{}");
+      },
+    );
     const { connect } = await import("node:net");
-    const response = await new Promise((resolve, reject) => {
+    const response = await new Promise<string>((resolve, reject) => {
       let received = "";
-      const socket = connect(new URL(base).port, "127.0.0.1", () => {
+      const socket = connect(Number(new URL(base).port), "127.0.0.1", () => {
         socket.write(
           "GET http://[ HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
         );
@@ -268,24 +290,27 @@ for (const scenario of [
     `upstream ${scenario} reports 502 and a safe activity event`,
     { timeout: 10000 },
     async (t) => {
-      const { base } = await startGateway(t, (req, res) => {
-        if (defaults(req, res)) return;
-        if (scenario === "disconnect") {
-          res.destroy();
-          return;
-        }
-        res.writeHead(scenario === "oversized refusal" ? 429 : 200, {
-          "Content-Type": "application/json",
-        });
-        const padding = "x".repeat(2 * 1024 * 1024);
-        res.end(
-          JSON.stringify(
-            scenario === "oversized catalog"
-              ? { data: [{ id: "gpt-test", metadata: padding }] }
-              : { error: { message: padding } },
-          ),
-        );
-      });
+      const { base } = await startGateway(
+        t,
+        (req: http.IncomingMessage, res: http.ServerResponse) => {
+          if (defaults(req, res)) return;
+          if (scenario === "disconnect") {
+            res.destroy();
+            return;
+          }
+          res.writeHead(scenario === "oversized refusal" ? 429 : 200, {
+            "Content-Type": "application/json",
+          });
+          const padding = "x".repeat(2 * 1024 * 1024);
+          res.end(
+            JSON.stringify(
+              scenario === "oversized catalog"
+                ? { data: [{ id: "gpt-test", metadata: padding }] }
+                : { error: { message: padding } },
+            ),
+          );
+        },
+      );
       const path =
         scenario === "oversized catalog" ? "/codex/v1/models" : "/v1/responses";
       const response = await fetch(base + path + "?private=hidden-query", {
@@ -296,7 +321,7 @@ for (const scenario of [
           : {}),
       });
       assert.equal(response.status, 502);
-      const state = await (await fetch(base + "/api/state")).json();
+      const state = await dashboard(await fetch(base + "/api/state"));
       assert.ok(
         state.events.some(
           (event) =>
@@ -318,22 +343,28 @@ for (const scenario of ["oversized", "malformed", "unavailable"]) {
     `an invalid ownership catalog (${scenario}) reports an upstream failure`,
     { timeout: 10000 },
     async (t) => {
-      const { base } = await startGateway(t, (req, res) => {
-        if (defaults(req, res)) return;
-        res.setHeader("Content-Type", "application/json");
-        if (req.url.includes("client_version")) {
-          res.end('{"models":[{"slug":"g5","context_window":400000}]}');
-          return;
-        }
-        if (scenario === "unavailable") res.writeHead(503);
-        res.end(
-          scenario === "oversized"
-            ? JSON.stringify({ data: [], padding: "x".repeat(2 * 1024 * 1024) })
-            : scenario === "malformed"
-              ? "{"
-              : "{}",
-        );
-      });
+      const { base } = await startGateway(
+        t,
+        (req: http.IncomingMessage, res: http.ServerResponse) => {
+          if (defaults(req, res)) return;
+          res.setHeader("Content-Type", "application/json");
+          if (req.url?.includes("client_version")) {
+            res.end('{"models":[{"slug":"g5","context_window":400000}]}');
+            return;
+          }
+          if (scenario === "unavailable") res.writeHead(503);
+          res.end(
+            scenario === "oversized"
+              ? JSON.stringify({
+                  data: [],
+                  padding: "x".repeat(2 * 1024 * 1024),
+                })
+              : scenario === "malformed"
+                ? "{"
+                : "{}",
+          );
+        },
+      );
       const response = await fetch(base + "/codex/v1/models?client_version=1", {
         headers: { Authorization: "Bearer proxy-test" },
       });
@@ -347,19 +378,24 @@ test(
   "disconnecting during ownership lookup cancels the unfinished upstream body",
   { timeout: 10000 },
   async (t) => {
-    const { promise: started, resolve: markStarted } = Promise.withResolvers();
-    const { promise: closed, resolve: markClosed } = Promise.withResolvers();
-    const { base } = await startGateway(t, (req, res) => {
-      if (defaults(req, res)) return;
-      res.setHeader("Content-Type", "application/json");
-      if (req.url.includes("client_version")) {
-        res.end('{"models":[{"slug":"g5"}]}');
-        return;
-      }
-      res.once("close", markClosed);
-      res.write('{"data":[');
-      markStarted();
-    });
+    const { promise: started, resolve: markStarted } =
+      Promise.withResolvers<void>();
+    const { promise: closed, resolve: markClosed } =
+      Promise.withResolvers<void>();
+    const { base } = await startGateway(
+      t,
+      (req: http.IncomingMessage, res: http.ServerResponse) => {
+        if (defaults(req, res)) return;
+        res.setHeader("Content-Type", "application/json");
+        if (req.url?.includes("client_version")) {
+          res.end('{"models":[{"slug":"g5"}]}');
+          return;
+        }
+        res.once("close", markClosed);
+        res.write('{"data":[');
+        markStarted();
+      },
+    );
     const request = http.get(base + "/codex/v1/models?client_version=1", {
       headers: { Authorization: "Bearer proxy-test" },
     });

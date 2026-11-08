@@ -1,6 +1,6 @@
 import { installationRoot, monitor, rollback } from "../src/deployment.ts";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { diagnosticReport } from "../src/diagnostics.ts";
+import { atomicWrite } from "../src/deployment.ts";
 
 async function main() {
   const root = process.env.CLI_PROXY_INSTALLATION || installationRoot();
@@ -13,15 +13,51 @@ async function main() {
         await rollback(root);
         break;
       case "status":
-        for (const name of ["deployment.json", "incident.json"]) {
+      case "diagnostics": {
+        const report = await diagnosticReport(root);
+        const output = process.argv
+          .find((v) => v.startsWith("--output="))
+          ?.slice(9);
+        const body = JSON.stringify(report, null, 2) + "\n";
+        if (output) {
+          await atomicWrite(output, body);
+          console.log(`Diagnostics saved to ${output}`);
+        } else if (
+          process.argv[2] === "diagnostics" ||
+          process.argv.includes("--json")
+        )
+          console.log(body);
+        else {
+          console.log(`CLI Proxy: ${report.healthy ? "healthy" : "unhealthy"}`);
           console.log(
-            name,
-            await readFile(join(root, name), "utf8").catch(() => "No record"),
+            `Release: ${report.expected?.release || "not installed"}`,
           );
+          console.log(
+            `Commit: ${report.expected?.commit || "unknown"}${report.expected?.dirty ? " (uncommitted changes)" : ""}`,
+          );
+          console.log(
+            `Engine: ${report.expected?.engineVersion || "unknown"} · Build: ${report.expected?.build || "unknown"}`,
+          );
+          console.log(
+            `Running release: ${report.running?.release || "unreachable"}`,
+          );
+          for (const s of report.services)
+            console.log(`${s.name}: ${s.state} · restarts ${s.restarts}`);
+          console.log(
+            `Last heartbeat: ${report.heartbeat?.at || "none"}${report.heartbeatStale ? " (stale)" : ""}`,
+          );
+          if (report.gatewayReason)
+            console.log(
+              `Failure: ${report.startupReason || report.gatewayReason}`,
+            );
         }
+        if (!report.healthy) process.exitCode = 1;
         break;
+      }
       default:
-        throw new Error("Usage: maintenance.cjs monitor|status|rollback");
+        throw new Error(
+          "Usage: maintenance.cjs monitor|status|diagnostics|rollback",
+        );
     }
   } catch (error) {
     // A running deployment owns recovery. Timer retries next minute.

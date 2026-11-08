@@ -1,3 +1,4 @@
+import { present } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -7,12 +8,20 @@ import {
   timestamp,
 } from "../src/quota.ts";
 const now = Date.now();
-const account = (id, days, remaining = 80, overrides = {}) => ({
+const account = (
+  id: string,
+  days: number,
+  remaining = 80,
+  overrides: { provider?: string; disabled?: boolean; quota?: null } = {},
+) => ({
   id,
   name: `${id}.json`,
   provider: "claude",
   disabled: false,
   quota: {
+    plan: null,
+    availableResets: null,
+    nextResetExpiresAt: null,
     fetchedAt: new Date(now).toISOString(),
     windows: [
       {
@@ -21,7 +30,12 @@ const account = (id, days, remaining = 80, overrides = {}) => ({
         remaining,
         resetsAt: new Date(now + days * 86400000).toISOString(),
       },
-      { id: "five_hour", label: "5-hour limit", remaining: 100 },
+      {
+        id: "five_hour",
+        label: "5-hour limit",
+        remaining: 100,
+        resetsAt: null,
+      },
     ],
   },
   ...overrides,
@@ -37,14 +51,14 @@ test("new sessions use the nearest reset, independently per provider", () => {
     now,
   );
   assert.ok(
-    ranks.find((r) => r.id === "soon").priority >
-      ranks.find((r) => r.id === "later").priority,
+    present(ranks.find((r) => r.id === "soon")).priority >
+      present(ranks.find((r) => r.id === "later")).priority,
   );
-  assert.equal(ranks.find((r) => r.id === "codex").priority, 10000);
+  assert.equal(present(ranks.find((r) => r.id === "codex")).priority, 10000);
 });
 test("exhausted short windows cannot outrank usable accounts; disabled accounts are untouched", () => {
   const exhausted = account("empty", 0.5);
-  exhausted.quota.windows[1].remaining = 0;
+  present(exhausted.quota).windows[1].remaining = 0;
   const ranks = rankAccounts(
     [
       exhausted,
@@ -59,7 +73,7 @@ test("exhausted short windows cannot outrank usable accounts; disabled accounts 
 });
 test("stale, missing, and elapsed resets never imply replenishment", () => {
   const stale = account("stale", 0.1);
-  stale.quota.fetchedAt = new Date(now - 181000).toISOString();
+  present(stale.quota).fetchedAt = new Date(now - 181000).toISOString();
   assert.deepEqual(
     rankAccounts(
       [
@@ -127,7 +141,7 @@ test("plugin camelCase and snake_case buckets support 7d windows", () => {
       },
     ],
   });
-  assert.equal(weeklyWindow({ quota: q }).remaining, 25);
+  assert.equal(present(weeklyWindow({ quota: q })).remaining, 25);
   assert.throws(() => normalizeQuota("claude", {}), /no supported quota/);
 });
 test("Codex available resets preserve zero and distinguish missing or malformed balances", () => {
@@ -165,7 +179,7 @@ test("Codex available resets preserve zero and distinguish missing or malformed 
   assert.equal(normalizeQuota("codex", usage).availableResets, null);
 });
 test("Claude counts unused active reset grants without requiring immediate redemption eligibility", () => {
-  const grant = (resets_left, extra = {}) => ({
+  const grant = (resets_left: number, extra = {}) => ({
     resets_left,
     starts_at: new Date(now - 86400000).toISOString(),
     ends_at: new Date(now + 86400000).toISOString(),

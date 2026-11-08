@@ -1,3 +1,4 @@
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -11,14 +12,18 @@ import { fallbackClaudeVersion } from "../src/claude-version.ts";
 // The Claude quota probe identifies itself as Claude Code. It used to send a hardcoded
 // `claude-cli/2.1.288` that was never bumped, so every Claude Code update left the proxy
 // reporting an older app than the one installed. The probe must ask the installed CLI.
-async function probeUserAgent(t, script, extraBinaries = []) {
+async function probeUserAgent(
+  t: import("node:test").TestContext,
+  script: string,
+  extraBinaries: string[] = [],
+) {
   const dir = await mkdtemp(join(tmpdir(), "cli-proxy-claude-version-"));
   const binary = join(dir, "claude");
   await writeFile(binary, `#!/bin/sh\n${script}\n`, { mode: 0o700 });
   let userAgent;
   const server = http.createServer(async (req, res) => {
     // Other test files probe for free ports, so ignore anything that is not the engine call.
-    if (!req.url.endsWith("/v0/management/api-call")) {
+    if (!req.url?.endsWith("/v0/management/api-call")) {
       res.writeHead(404);
       res.end();
       return;
@@ -46,7 +51,7 @@ async function probeUserAgent(t, script, extraBinaries = []) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const engine = await createEngine({
-    url: `http://127.0.0.1:${server.address().port}`,
+    url: `http://127.0.0.1:${address(server).port}`,
     key: "test",
     claudeBinary: [...extraBinaries, binary],
   });
@@ -102,7 +107,7 @@ test("Claude quota probe picks up a release installed while the gateway is runni
     versions = join(dir, "claude/versions");
   t.after(() => rm(dir, { recursive: true, force: true }));
   await mkdir(versions, { recursive: true });
-  const install = (version) =>
+  const install = (version: string) =>
     writeFile(
       join(versions, version),
       `#!/bin/sh\necho "${version} (Claude Code)"\n`,
@@ -111,7 +116,7 @@ test("Claude quota probe picks up a release installed while the gateway is runni
   await install("2.4.600");
   let userAgent;
   const server = http.createServer(async (req, res) => {
-    if (!req.url.endsWith("/v0/management/api-call")) {
+    if (!req.url?.endsWith("/v0/management/api-call")) {
       res.writeHead(404);
       res.end();
       return;
@@ -136,7 +141,7 @@ test("Claude quota probe picks up a release installed while the gateway is runni
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const engine = await createEngine({
-    url: `http://127.0.0.1:${server.address().port}`,
+    url: `http://127.0.0.1:${address(server).port}`,
     key: "test",
     claudeBinary: join(versions, "2.4.600"),
   });

@@ -1,3 +1,6 @@
+import { dashboard as readDashboard, present } from "./test-helpers.ts";
+import type { DashboardState } from "../src/domain.ts";
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -12,15 +15,19 @@ test(
   "tailnet dashboard opens without login while inference stays authenticated",
   { timeout: 20000 },
   async (t) => {
-    const patches = [],
-      seen = [],
-      sockets = new Set();
+    const patches: Array<{ priority: number }> = [],
+      seen: Array<{
+        headers: http.IncomingHttpHeaders;
+        body?: unknown;
+        websocket?: boolean;
+      }> = [],
+      sockets = new Set<import("node:stream").Duplex>();
     let usableQuota = false;
     const engine = http.createServer(async (req, res) => {
       let raw = "";
       for await (const chunk of req) raw += chunk;
       const body = raw ? JSON.parse(raw) : {};
-      const path = new URL(req.url, "http://local").pathname;
+      const path = new URL(req.url || "/", "http://local").pathname;
       res.setHeader("Content-Type", "application/json");
       if (
         req.headers.authorization !== "Bearer test-management" &&
@@ -89,7 +96,9 @@ test(
         assert.equal(req.headers["if-none-match"], undefined);
         res.setHeader("ETag", '"unfiltered"');
         if (
-          new URL(req.url, "http://local").searchParams.has("client_version")
+          new URL(req.url || "/", "http://local").searchParams.has(
+            "client_version",
+          )
         ) {
           res.end(
             JSON.stringify({
@@ -155,7 +164,7 @@ test(
     await once(engine, "listening");
     const portProbe = http.createServer().listen(0, "127.0.0.1");
     await once(portProbe, "listening");
-    const port = portProbe.address().port;
+    const port = address(portProbe).port;
     await new Promise((r) => portProbe.close(r));
     const dir = await mkdtemp(join(tmpdir(), "cli-proxy-test-"));
     await writeFile(
@@ -167,7 +176,7 @@ test(
       env: {
         ...process.env,
         PORT: String(port),
-        ENGINE_URL: `http://127.0.0.1:${engine.address().port}`,
+        ENGINE_URL: `http://127.0.0.1:${address(engine).port}`,
         ENGINE_MANAGEMENT_KEY: "test-management",
         PROXY_API_KEY: "test-api",
         DATA_DIR: dir,
@@ -217,7 +226,7 @@ test(
       assert.equal(catalog.status, 200);
       assert.equal(catalog.headers.get("etag"), null);
       assert.deepEqual(
-        (await catalog.json()).data.map((model) => model.id),
+        (await catalog.json()).data.map((model: { id: string }) => model.id),
         expected,
       );
     }
@@ -326,7 +335,7 @@ test(
       ).status,
       200,
     );
-    const usableState = await (await fetch(base + "/api/state")).json();
+    const usableState = await readDashboard(await fetch(base + "/api/state"));
     assert.equal(usableState.schedulerError, null);
     assert.deepEqual(
       usableState.ranks.map((r) => r.id),
@@ -360,13 +369,13 @@ test(
       },
       body: JSON.stringify({ model: "test", stream: true }),
     });
-    assert.match(stream.headers.get("content-type"), /event-stream/);
+    assert.match(present(stream.headers.get("content-type")), /event-stream/);
     assert.match(await stream.text(), /response.completed/);
     assert.equal(seen[0].headers.cookie, undefined);
     assert.equal(seen[0].headers.session_id, "sticky-123");
     assert.equal(seen[0].headers.authorization, "Bearer test-api");
     // Verify the authenticated upgrade without a third-party WebSocket client.
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const req = http.request(base + "/codex/v1/responses", {
         headers: {
           Authorization: "Bearer test-api",
@@ -380,7 +389,12 @@ test(
       req.on("upgrade", (res, socket) => {
         try {
           assert.equal(res.statusCode, 101);
-          assert.equal(seen.at(-1).headers.authorization, "Bearer test-api");
+          assert.ok(res.headers["x-cli-proxy-release"]);
+          assert.ok(res.headers["x-cli-proxy-request-id"]);
+          assert.equal(
+            present(seen.at(-1)).headers.authorization,
+            "Bearer test-api",
+          );
           socket.destroy();
           resolve();
         } catch (e) {

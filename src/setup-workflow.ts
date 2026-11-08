@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import { constants } from "node:fs";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { appendDiagnostic } from "./diagnostics.ts";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
@@ -63,7 +64,7 @@ export async function runSetup(
   if (env.CLI_PROXY_T3_SETTINGS && !(await exists(env.CLI_PROXY_T3_SETTINGS)))
     throw new Error("CLI_PROXY_T3_SETTINGS does not exist");
   let t3: string | undefined;
-  for (const path of t3Candidates)
+  for (const path of env.CLI_PROXY_SKIP_T3 === "1" ? [] : t3Candidates)
     if (await exists(path)) {
       t3 = path;
       break;
@@ -110,9 +111,27 @@ export async function runSetup(
     capture = false,
   ) => {
     console.log(`Setup: ${name}`);
+    const started = Date.now();
+    await appendDiagnostic(join(installation, ".local"), "setup", {
+      kind: "step_started",
+      step: name,
+    }).catch(() => {});
     try {
-      return await run(binary, args, capture);
+      const result = await run(binary, args, capture);
+      await appendDiagnostic(join(installation, ".local"), "setup", {
+        kind: "step_completed",
+        step: name,
+        status: "ok",
+        durationMs: Date.now() - started,
+      }).catch(() => {});
+      return result;
     } catch {
+      await appendDiagnostic(join(installation, ".local"), "setup", {
+        kind: "step_failed",
+        step: name,
+        status: "error",
+        durationMs: Date.now() - started,
+      }).catch(() => {});
       throw new Error(
         `Setup stopped at: ${name}. See the command output above. Rerun npm run setup after resolving it.`,
       );

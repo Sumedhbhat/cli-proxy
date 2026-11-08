@@ -1,4 +1,5 @@
 // Dashboard API for usage, devices, and billing records.
+import { readHistory } from "./quota-history.ts";
 import { Effect, Ref, Schema } from "effect";
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -200,10 +201,39 @@ export const makeUsageApi = Effect.gen(function* () {
       const coverage = yield* ledger.coverage;
       const options = yield* ledger.options;
       const deviceList = yield* devices.list;
+      const history = readHistory(config.dataDir, filter);
+      const cutoff =
+        typeof coverage.trackingStartedAt === "string"
+          ? coverage.trackingStartedAt.slice(0, 10)
+          : null;
+      const nativeGroups =
+        filter.account || filter.device
+          ? []
+          : history.groups.filter(
+              (g) =>
+                (!cutoff || g.day < cutoff) &&
+                (!filter.model || g.model === filter.model),
+            );
       return {
+        quotaHistory: history.quota,
+        activity:
+          filter.account || filter.device
+            ? []
+            : history.activity.filter(
+                (u) => !filter.model || u.group.model === filter.model,
+              ),
+        historical: {
+          observations: nativeGroups.length,
+          firstDay: nativeGroups.map((g) => g.day).sort()[0] || null,
+          lastDay:
+            nativeGroups
+              .map((g) => g.day)
+              .sort()
+              .at(-1) || null,
+        },
         generatedAt: new Date().toISOString(),
         filter,
-        ...buildReport(groups),
+        ...buildReport([...groups, ...nativeGroups]),
         coverage: {
           ...coverage,
           gatewayRequests: yield* ledger.gatewayRequests(filter),
@@ -222,7 +252,21 @@ export const makeUsageApi = Effect.gen(function* () {
           records: billing.records,
           imports: billing.imports,
         },
-        options: { ...options, deviceLabels: deviceList },
+        options: {
+          ...options,
+          models: [
+            ...new Map(
+              [
+                ...options.models,
+                ...history.groups.map((g) => ({
+                  id: g.model,
+                  provider: g.provider,
+                })),
+              ].map((m) => [String(m.provider) + ":" + String(m.id), m]),
+            ).values(),
+          ],
+          deviceLabels: deviceList,
+        },
       };
     });
 

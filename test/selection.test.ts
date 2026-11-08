@@ -1,11 +1,12 @@
+import { present } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rankAccounts } from "../src/quota.ts";
 
 const now = Date.parse("2026-11-07T00:00:00Z");
-const at = (days) => new Date(now + days * 86400000).toISOString();
+const at = (days: number) => new Date(now + days * 86400000).toISOString();
 const account = (
-  id,
+  id: string,
   {
     provider = "claude",
     weeklyDays = 4,
@@ -14,12 +15,21 @@ const account = (
     weeklyRemaining = 80,
     shortRemaining = 100,
     shortDays = 0.1,
+  }: {
+    provider?: string;
+    weeklyDays?: number;
+    expiryDays?: number | null;
+    resets?: number;
+    weeklyRemaining?: number;
+    shortRemaining?: number;
+    shortDays?: number;
   } = {},
 ) => ({
   id,
   name: `${id}.json`,
   provider,
   quota: {
+    plan: null,
     fetchedAt: at(0),
     availableResets: resets,
     nextResetExpiresAt: expiryDays == null ? null : at(expiryDays),
@@ -113,9 +123,9 @@ test("held resets never make exhausted accounts immediately usable", () => {
     ranks.slice(0, 2).map((r) => r.id),
     ["healthy", "unknown"],
   );
-  assert.equal(ranks.find((r) => r.id === "unknown").priority, 0);
+  assert.equal(present(ranks.find((r) => r.id === "unknown")).priority, 0);
   for (const id of ["short-empty", "weekly-empty"])
-    assert.equal(ranks.find((r) => r.id === id).priority, -1000000);
+    assert.equal(present(ranks.find((r) => r.id === id)).priority, -1000000);
   assert.equal(ranks.length, 4);
 });
 
@@ -202,5 +212,5 @@ test("each provider keeps its own first priority when credit expiry determines t
     now,
   );
   for (const id of ["claude-credit", "codex-credit"])
-    assert.equal(ranks.find((r) => r.id === id).priority, 10000);
+    assert.equal(present(ranks.find((r) => r.id === id)).priority, 10000);
 });

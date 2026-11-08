@@ -2,7 +2,14 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Fiber, FiberSet, Layer, Schedule, Schema } from "effect";
 import http from "node:http";
-import { basename } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  releaseIdentity,
+  appendDiagnostic,
+  requestRoute,
+  diagnosticReport,
+} from "./diagnostics.ts";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Duplex } from "node:stream";
 import { AppConfig, ConfigLive } from "./config.ts";
@@ -44,6 +51,10 @@ const ImportInput = Schema.Struct({
 
 export const serve = Effect.gen(function* () {
   const config = yield* AppConfig;
+  const identity = releaseIdentity(
+    fileURLToPath(new URL("../release.json", import.meta.url)),
+  );
+  const startedAt = new Date().toISOString();
   const app = yield* Application;
   const engine = yield* Engine;
   const gateway = yield* makeGateway;
@@ -54,6 +65,35 @@ export const serve = Effect.gen(function* () {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ) {
+    res.setHeader("X-CLI-Proxy-Release", identity.release);
+    res.setHeader("X-CLI-Proxy-Commit", identity.commit);
+    res.setHeader("X-CLI-Proxy-Build", identity.build);
+    const requestId = randomUUID();
+    res.setHeader("X-CLI-Proxy-Request-ID", requestId);
+    const began = performance.now();
+    res.once("finish", () => {
+      const route = requestRoute((req.url || "/").split("?")[0]);
+      if (route === "other" || req.url === "/healthz") return;
+      run(
+        Effect.tryPromise(() =>
+          appendDiagnostic(config.dataDir, "app", {
+            kind: "request",
+            release: identity.release,
+            commit: identity.commit,
+            requestId,
+            route,
+            httpStatus: res.statusCode,
+            durationMs: Math.round(performance.now() - began),
+            status:
+              res.statusCode >= 500
+                ? "error"
+                : res.statusCode === 429
+                  ? "provider_limit"
+                  : "ok",
+          }),
+        ).pipe(Effect.catch(() => Effect.void)),
+      );
+    });
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "same-origin");
     res.setHeader(
@@ -71,9 +111,10 @@ export const serve = Effect.gen(function* () {
       json(res, 200, {
         status: "ok",
         demo: config.demo,
-        release:
-          process.env.CLI_PROXY_RELEASE ||
-          basename(fileURLToPath(new URL("../", import.meta.url))),
+        ...identity,
+        release: process.env.CLI_PROXY_RELEASE || identity.release,
+        startedAt,
+        uptimeSeconds: Math.floor(process.uptime()),
       });
       return;
     }
@@ -83,6 +124,23 @@ export const serve = Effect.gen(function* () {
           status: 403,
           message: "Cross-origin request rejected",
         });
+      if (path === "/api/diagnostics" && req.method === "GET") {
+        res.setHeader(
+          "Content-Disposition",
+          'attachment; filename="cli-proxy-diagnostics.json"',
+        );
+        res.setHeader("Cache-Control", "no-store");
+        json(
+          res,
+          200,
+          yield* Effect.tryPromise(() =>
+            diagnosticReport(
+              process.env.CLI_PROXY_INSTALLATION || dirname(config.dataDir),
+            ),
+          ),
+        );
+        return;
+      }
       if (yield* usageApi.handle(req, res, url)) return;
       if (path === "/api/state" && req.method === "GET") {
         json(res, 200, yield* app.snapshot);
@@ -276,7 +334,12 @@ export const serve = Effect.gen(function* () {
               socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
               return;
             }
-            yield* gateway.upgrade(req, socket, head);
+            yield* gateway.upgrade(req, socket, head, {
+              "X-CLI-Proxy-Release": identity.release,
+              "X-CLI-Proxy-Commit": identity.commit,
+              "X-CLI-Proxy-Build": identity.build,
+              "X-CLI-Proxy-Request-ID": randomUUID(),
+            });
           }).pipe(
             Effect.catch((error) =>
               Effect.sync(() => {
@@ -319,6 +382,14 @@ export const serve = Effect.gen(function* () {
     );
     server.listen(config.port, "127.0.0.1", () => resume(Effect.void));
   });
+  yield* Effect.tryPromise(() =>
+    appendDiagnostic(config.dataDir, "app", {
+      kind: "startup",
+      release: identity.release,
+      commit: identity.commit,
+      status: "ok",
+    }),
+  ).pipe(Effect.catch(() => Effect.void));
   console.log(
     `CLI Proxy ${config.demo ? "(demo)" : ""}: http://127.0.0.1:${(server.address() as { port: number }).port}`,
   );

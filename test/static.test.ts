@@ -1,3 +1,5 @@
+import { present } from "./test-helpers.ts";
+import { address } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -9,7 +11,7 @@ import { join } from "node:path";
 import { brotliDecompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
 
-const hash = (body) =>
+const hash = (body: Buffer) =>
   createHash("sha256").update(body).digest("base64url").slice(0, 16);
 
 test(
@@ -19,7 +21,7 @@ test(
     const dir = await mkdtemp(join(tmpdir(), "cli-proxy-static-test-"));
     const probe = http.createServer().listen(0, "127.0.0.1");
     await once(probe, "listening");
-    const port = probe.address().port;
+    const port = address(probe).port;
     await new Promise((r) => probe.close(r));
     const child = spawn(process.execPath, ["src/server.ts", "--demo"], {
       cwd: process.cwd(),
@@ -43,27 +45,30 @@ test(
       }),
     ]);
     const base = `http://127.0.0.1:${port}`;
-    const get = (path, headers = {}) => fetch(base + path, { headers });
+    const get = (path: string, headers: HeadersInit = {}) =>
+      fetch(base + path, { headers });
 
     const page = await get("/");
     assert.equal(page.headers.get("cache-control"), "no-store");
     const html = await page.text();
     const state = JSON.parse(
-      /<script id="initial-state" type="application\/json">([^<]*)<\/script>/.exec(
-        html,
+      present(
+        /<script id="initial-state" type="application\/json">([^<]*)<\/script>/.exec(
+          html,
+        ),
       )[1],
     );
     assert.equal(state.demo, true);
     assert.ok(state.accounts.length > 0);
-    const script = /src="\.\/app\.js\?v=([\w-]+)"/.exec(html)[1];
-    const style = /href="\.\/style\.css\?v=([\w-]+)"/.exec(html)[1];
+    const script = present(/src="\.\/app\.js\?v=([\w-]+)"/.exec(html))[1];
+    const style = present(/href="\.\/style\.css\?v=([\w-]+)"/.exec(html))[1];
 
     const pinned = await get(`/app.js?v=${script}`);
     assert.equal(
       pinned.headers.get("cache-control"),
       "public, max-age=31536000, immutable",
     );
-    const etag = pinned.headers.get("etag");
+    const etag = present(pinned.headers.get("etag"));
     assert.equal(hash(Buffer.from(await pinned.arrayBuffer())), script);
     const pinnedStyle = await get(`/style.css?v=${style}`);
     assert.equal(
@@ -83,13 +88,16 @@ test(
     assert.equal((await get("/app.js", { "If-None-Match": "*" })).status, 304);
 
     // fetch decodes transparently, so read the raw encoded body over http.
-    const raw = await new Promise((resolve, reject) =>
+    const raw = await new Promise<{
+      headers: http.IncomingHttpHeaders;
+      body: Buffer;
+    }>((resolve, reject) =>
       http
         .get(
           `${base}/style.css`,
           { headers: { "Accept-Encoding": "gzip, br" } },
           (res) => {
-            const chunks = [];
+            const chunks: Buffer[] = [];
             res.on("data", (c) => chunks.push(c));
             res.on("end", () =>
               resolve({ headers: res.headers, body: Buffer.concat(chunks) }),
@@ -100,17 +108,18 @@ test(
     );
     assert.equal(raw.headers["content-encoding"], "br");
     assert.match(brotliDecompressSync(raw.body).toString(), /@font-face/);
-    const noBrotli = await new Promise((resolve, reject) =>
-      http
-        .get(
-          `${base}/style.css`,
-          { headers: { "Accept-Encoding": "gzip, br;q=0" } },
-          (res) => {
-            res.resume();
-            resolve(res.headers);
-          },
-        )
-        .on("error", reject),
+    const noBrotli = await new Promise<http.IncomingHttpHeaders>(
+      (resolve, reject) =>
+        http
+          .get(
+            `${base}/style.css`,
+            { headers: { "Accept-Encoding": "gzip, br;q=0" } },
+            (res) => {
+              res.resume();
+              resolve(res.headers);
+            },
+          )
+          .on("error", reject),
     );
     assert.equal(noBrotli["content-encoding"], "gzip");
 
