@@ -30,9 +30,24 @@ function quotaGraph(
     .sort((a, b) => a.at.localeCompare(b.at));
   const latest = samples.at(-1),
     name = provider === "claude" ? "Claude" : "Codex";
+  const accounts = [
+    ...new Set(
+      samples.filter((s) => s.source === "provider").map((s) => s.account),
+    ),
+  ];
+  const seriesKey = (s: QuotaSample) => {
+    const account =
+      s.source === "native-cli" && accounts.length === 1
+        ? accounts[0]
+        : s.account;
+    const window = /^(weekly|seven_day|secondary_window)$/.test(s.window)
+      ? "weekly"
+      : s.window;
+    return account + ":" + window;
+  };
   const series = new Map<string, QuotaSample[]>();
   for (const s of samples) {
-    const k = s.account + ":" + s.window;
+    const k = seriesKey(s);
     series.set(k, [...(series.get(k) || []), s]);
   }
   const start = samples.length
@@ -49,32 +64,27 @@ function quotaGraph(
     .map((points, i) => {
       let path = "";
       points.forEach((p, j) => {
-        const last = points[j - 1];
-        const gap =
-          !last ||
-          p.source === "native-cli" ||
-          Date.parse(p.at) - Date.parse(last.at) > 15 * 60000;
-        path += `${gap ? "M" : "L"}${x(p.at).toFixed(1)},${y(p.remaining).toFixed(1)} `;
+        path += `${j === 0 ? "M" : "L"}${x(p.at).toFixed(1)},${y(p.remaining).toFixed(1)} `;
       });
       return (
         `<path d="${path}" fill="none" stroke="var(--series-${provider})" stroke-width="2.3" opacity="${Math.max(0.4, 1 - i * 0.12)}"/>` +
         points
           .map(
             (p) =>
-              `<g class="trend-day" tabindex="0" data-tip="${h.esc(`${stamp(p.at)} · ${p.remaining.toFixed(1)}% remaining · ${p.source === "native-cli" ? "CLI history, account unknown" : "Account " + (i + 1)} · ${p.window}`)}"><circle cx="${x(p.at)}" cy="${y(p.remaining)}" r="3" fill="var(--series-${provider})"/><title>${h.esc(stamp(p.at) + ": " + p.remaining.toFixed(1) + "% remaining")}</title></g>`,
+              `<g class="trend-day" tabindex="0" data-tip="${h.esc(`${stamp(p.at)} · ${p.remaining.toFixed(1)}% remaining · ${p.source === "native-cli" ? "CLI history, account unknown" : "Account " + (i + 1)} · ${p.window}`)}"><circle cx="${x(p.at)}" cy="${y(p.remaining)}" r="8" fill="transparent"/><title>${h.esc(stamp(p.at) + ": " + p.remaining.toFixed(1) + "% remaining")}</title></g>`,
           )
           .join("")
       );
     })
     .join("");
-  const same = latest
-      ? series.get(latest.account + ":" + latest.window) || []
-      : [],
+  const same = latest ? series.get(seriesKey(latest)) || [] : [],
     prev = [...same]
       .reverse()
       .find(
         (p) =>
           latest &&
+          p.source === "provider" &&
+          p.account === latest.account &&
           p.resetsAt !== null &&
           latest.resetsAt !== null &&
           Math.abs(Date.parse(p.resetsAt) - Date.parse(latest.resetsAt)) <
@@ -89,7 +99,7 @@ function quotaGraph(
             ((Date.parse(latest.at) - Date.parse(prev.at)) / 3600000),
         )
       : null;
-  return `<section class="panel quota-graph"><h2>${name} weekly limit</h2><div class="graph-number">${latest ? latest.remaining.toFixed(1) + "%" : "—"}<small>remaining</small></div><p class="graph-caption">${rate === null ? "Collecting burn rate" : rate.toFixed(1) + " percentage points / hour"}${latest?.resetsAt ? " · resets " + h.esc(stamp(latest.resetsAt)) : ""}</p><p class="graph-coverage">${refreshErrors ? "Refresh unavailable · showing saved data" : latest && samples.every((p) => p.remaining === 0) ? "Earlier depletion not recorded" : ""}</p><div class="chart-wrap"><svg viewBox="0 0 360 205" role="img" aria-label="${name} weekly quota remaining over time">${[0, 50, 100].map((v) => `<line class="grid" x1="42" x2="342" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="35" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("")}${lines}<text class="axis" x="42" y="199">${h.esc(stamp(new Date(start).toISOString()))}</text><text class="axis" x="342" y="199" text-anchor="end">Now</text></svg><div class="chart-tip" hidden></div>${!samples.length ? '<p class="chart-empty">No retained quota snapshots for this range. New observations are collected automatically.</p>' : ""}</div><details data-usage-detail="quota-${provider}"><summary>Quota history</summary><p class="fine">${samples.length} observations${samples.length ? " · history begins " + h.esc(stamp(samples[0].at)) : ""}. ${refreshErrors ? "Quota refresh failed for " + refreshErrors + " account(s). " : ""}${samples.length && samples.every((p) => p.remaining === 0) ? "All saved observations in this range are at 0%. Earlier depletion cannot be reconstructed from tokens." : ""}</p><p class="fine">Provider observations, per account/window. Resets rise back toward 100% when reported. Gaps are missing observations. Recovered CLI snapshots are isolated points because account identity is unknown. Lines connect identified-account observations at most 15 minutes apart.</p>${latest ? `<p class="fine">Last observed ${h.esc(stamp(latest.at))}</p>` : ""}</details></section>`;
+  return `<section class="panel quota-graph"><h2>${name} weekly limit</h2><div class="graph-number">${latest ? latest.remaining.toFixed(1) + "%" : "—"}<small>remaining</small></div><p class="graph-caption">${rate === null ? "Collecting burn rate" : rate.toFixed(1) + " percentage points / hour"}${latest?.resetsAt ? " · resets " + h.esc(stamp(latest.resetsAt)) : ""}</p><p class="graph-coverage">${refreshErrors ? "Refresh unavailable · showing saved data" : latest && samples.every((p) => p.remaining === 0) ? "Earlier depletion not recorded" : ""}</p><div class="chart-wrap"><svg viewBox="0 0 360 205" role="img" aria-label="${name} weekly quota remaining over time">${[0, 50, 100].map((v) => `<line class="grid" x1="42" x2="342" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="35" y="${y(v) + 4}" text-anchor="end">${v}%</text>`).join("")}${lines}<text class="axis" x="42" y="199">${h.esc(stamp(new Date(start).toISOString()))}</text><text class="axis" x="342" y="199" text-anchor="end">Now</text></svg><div class="chart-tip" hidden></div>${!samples.length ? '<p class="chart-empty">No retained quota snapshots for this range. New observations are collected automatically.</p>' : ""}</div><details data-usage-detail="quota-${provider}"><summary>Quota history</summary><p class="fine">${samples.length} observations${samples.length ? " · history begins " + h.esc(stamp(samples[0].at)) : ""}. ${refreshErrors ? "Quota refresh failed for " + refreshErrors + " account(s). " : ""}${samples.length && samples.every((p) => p.remaining === 0) ? "All saved observations in this range are at 0%. Earlier depletion cannot be reconstructed from tokens." : ""}</p><p class="fine">Provider observations, per account/window. Resets rise back toward 100% when reported. Lines connect saved readings using linear interpolation; intermediate percentages were not measured. Recovered CLI readings have unknown account identity and join the current account line for display only when there is one identified account. Different identified accounts remain separate.</p>${latest ? `<p class="fine">Last observed ${h.esc(stamp(latest.at))}</p>` : ""}</details></section>`;
 }
 function dailyGraph(report: Report, h: Helpers, view: UsageView) {
   const days = new Map<

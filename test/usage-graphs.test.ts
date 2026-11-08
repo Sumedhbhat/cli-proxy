@@ -103,7 +103,7 @@ test("project overview groups the long tail without losing projects or treating 
   });
   assert.match(values, /Unpriced/);
 });
-test("quota charts do not join unknown-account snapshots or bridge recording gaps", () => {
+test("quota charts connect saved readings without visible markers and identify interpolation", () => {
   const at = (m: number) =>
     new Date(Date.parse("2026-11-08T00:00:00Z") + m * 60000).toISOString();
   const samples = [0, 5, 30].map((m, i) => ({
@@ -121,7 +121,9 @@ test("quota charts do not join unknown-account snapshots or bridge recording gap
     usageView,
   );
   const paths = [...chart.matchAll(/<path d="([^"]*)"/g)].map((m) => m[1]);
-  assert.ok(paths.every((p) => !p.includes("L")));
+  assert.equal((paths[0].match(/L/g) || []).length, 2);
+  assert.match(chart, /linear interpolation/);
+  assert.doesNotMatch(chart, /r="3" fill="var/);
   const live = topGraphs(
     {
       ...report,
@@ -131,8 +133,8 @@ test("quota charts do not join unknown-account snapshots or bridge recording gap
     usageView,
   );
   const line = [...live.matchAll(/<path d="([^"]*)"/g)][0][1];
-  assert.equal((line.match(/L/g) || []).length, 1);
-  assert.equal((line.match(/M/g) || []).length, 2);
+  assert.equal((line.match(/L/g) || []).length, 2);
+  assert.equal((line.match(/M/g) || []).length, 1);
   assert.match(
     topGraphs(
       { ...report, quotaRefreshErrors: { claude: 1 } },
@@ -141,4 +143,43 @@ test("quota charts do not join unknown-account snapshots or bridge recording gap
     ),
     /Refresh unavailable/,
   );
+});
+
+test("historical weekly readings join a sole live account, while different identified accounts stay separate", () => {
+  const sample = {
+    provider: "codex",
+    account: "old",
+    window: "weekly",
+    at: "2026-10-24T00:00:00Z",
+    remaining: 80,
+    resetsAt: null,
+    source: "native-cli" as const,
+  };
+  const live = {
+    ...sample,
+    account: "a",
+    window: "secondary_window",
+    at: "2026-11-08T00:00:00Z",
+    remaining: 100,
+    source: "provider" as const,
+  };
+  const one = topGraphs(
+    { ...report, quotaHistory: [sample, live] },
+    helpers,
+    usageView,
+  );
+  assert.equal((one.match(/<path /g) || []).length, 1);
+  assert.equal(
+    (one.match(/<path d="([^"]*)"/)![1].match(/L/g) || []).length,
+    1,
+  );
+  const multiple = topGraphs(
+    {
+      ...report,
+      quotaHistory: [sample, live, { ...live, account: "b", remaining: 50 }],
+    },
+    helpers,
+    usageView,
+  );
+  assert.equal((multiple.match(/<path /g) || []).length, 3);
 });

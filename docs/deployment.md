@@ -221,8 +221,8 @@ Setup installs `cli-proxy-history.timer`, which reads the existing T3 cache ever
 five minutes. Its freshness depends on when T3 last scanned native usage. The
 proxy independently records weekly quota observations during each normal account
 refresh, including when the dashboard is closed. No historical quota curve is
-inferred from token counts: missing samples stay gaps, recovered snapshots with
-unknown accounts remain isolated points, and resets return toward 100% only when
+inferred from token counts: missing samples are never synthesized, recovered snapshots retain
+their unknown account identity, and resets return toward 100% only when
 observed. Historical Claude token usage can exist without historical Claude
 quota percentages.
 
@@ -247,6 +247,8 @@ independent recovery launcher installation still run.
 
 Project usage uses a share chart with summary statistics and a selectable measure.
 It shows up to five projects contributing at least 5% each; all remaining projects
-are available under Other projects. No projects are discarded. Quota lines join
-only identified-account observations at most 15 minutes apart. Missing earlier
+are available under Other projects. No projects are discarded. Quota lines connect saved readings with linear interpolation and no visible point
+markers. Intermediate percentages are not measured. Recovered CLI readings join a
+sole identified account for display, with their unknown attribution disclosed;
+multiple identified accounts remain separate. Missing earlier
 percentages and failed refreshes are shown explicitly.
