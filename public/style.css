@@ -114,9 +114,8 @@ h3 { margin: 0; font-size: 17px; font-weight: 500; }
 .provider-mark.all { color: var(--muted); }
 select, .search { min-height: 42px; padding: 8px 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 14px; max-width: 260px; }
 #layout { flex-shrink: 0; min-width: 150px; }
-.summary-grid { display: grid; grid-template-columns: repeat(var(--provider-count, 4), minmax(0, 1fr)); overflow: hidden; margin-bottom: 37px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
-.summary-card { min-width: 0; padding: 23px 23px 25px; border-right: 1px solid var(--line); }
-.summary-card:last-child { border-right: 0; }
+.summary-grid { display: grid; grid-template-columns: repeat(var(--summary-count, 4), minmax(0, 1fr)); gap: 1px; overflow: hidden; margin-bottom: 37px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.summary-card { min-width: 0; padding: 23px 23px 25px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 .summary-top { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 25px; font-size: 17px; font-weight: 600; }
 .summary-top small { margin-left: auto; color: var(--faint); font-size: 12px; font-weight: 400; }
 .summary-label { color: var(--muted); font-size: 15px; }
@@ -138,6 +137,9 @@ select, .search { min-height: 42px; padding: 8px 13px; border: 1px solid var(--l
 .sort-hint { color: var(--faint); font-size: 12px; }
 .ledger-head, .account-row { display: grid; grid-template-columns: minmax(210px, 1.45fr) repeat(3, minmax(130px, 1fr)) 110px; gap: 24px; align-items: center; }
 .ledger-head { padding: 0 0 13px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+.additional-limits { display: grid; gap: 20px; min-width: 0; }
+.secondary-limits { grid-column: 2 / -2; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fable-limit { min-width: 0; }
 .account-row { min-height: 122px; padding: 25px 0; border-bottom: 1px solid var(--line); }
 .account-identity, .quota-cell { min-width: 0; }
 .account-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 15px/1.5 var(--mono); letter-spacing: -.3px; }
@@ -149,6 +151,7 @@ select, .search { min-height: 42px; padding: 8px 13px; border: 1px solid var(--l
 .quota-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 14px; }
 .quota-top strong { color: var(--text); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .quota-reset { margin-top: 9px; color: var(--faint); font-size: 12px; line-height: 1.6; }
+.quota-detail { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .account-row > .button { justify-self: end; min-height: 40px; padding: 6px 0 6px 6px; font-size: 12px; }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
@@ -190,6 +193,8 @@ footer .tiny-dot { width: 5px; height: 5px; margin-right: 6px; }
 .card-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .card-view .account-row { display: block; padding: 25px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .card-view .quota-cell { margin: 24px 0; }
+.card-view .secondary-limits { grid-template-columns: minmax(0, 1fr); }
+.card-view .additional-limits .quota-cell { margin: 0; }
 .card-view .account-row > .button { margin-top: 10px; }
 .rank-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 17px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .rank-row small { display: block; margin-top: 6px; color: var(--faint); font-size: 12px; }
@@ -293,13 +298,12 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   .page-head .actions { padding-top: 3px; }
   h1 { font-size: 32px; }
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .summary-card:nth-child(2) { border-right: 0; }
-  .summary-card:nth-child(-n+2):not(:last-child) { border-bottom: 1px solid var(--line); }
   .summary-top { font-size: 18px; }
   .summary-top small { font-size: 13px; }
   .ledger-head { display: none; }
   .account-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 24px; padding: 24px 0; }
   .account-identity { grid-column: 1 / -1; }
+  .secondary-limits { grid-column: 1 / -1; }
   .account-row > .button { grid-column: 1 / -1; justify-self: start; padding-left: 0; font-size: 14px; }
   .account-name { font-size: 16px; }
   .quota-top { font-size: 14px; }
@@ -355,6 +359,7 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   .section-head h2 { font-size: 16px; }
   .sort-hint { font-size: 11px; }
   .account-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 23px 18px; }
+  .secondary-limits { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .account-name { font-size: 15px; }
   .account-meta { font-size: 12px; }
   .quota-top { font-size: 13px; gap: 6px; }
