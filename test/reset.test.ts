@@ -1,7 +1,12 @@
 import { present } from "./test-helpers.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nearestReset, nearestResetInfo, rankAccounts } from "../src/quota.ts";
+import {
+  nearestReset,
+  nearestResetInfo,
+  normalizeQuota,
+  rankAccounts,
+} from "../src/quota.ts";
 test("reset selection separates providers and waits for all exhausted windows", () => {
   const now = Date.now();
   const account = (provider: string, times: number[], extra = {}) => ({
@@ -156,4 +161,25 @@ test("cached Claude reset selection ignores disabled accounts and unrelated mode
   );
   account.quota.windows[0].resetsAt = "invalid";
   assert.equal(nearestReset([account], "claude-opus-5-5", now), null);
+});
+
+test("a newly reported model limit does not change another model's retry time", () => {
+  const now = Date.now();
+  const generalReset = new Date(now + 3600000).toISOString();
+  const modelReset = new Date(now + 86400000).toISOString();
+  const account = {
+    id: "claude",
+    name: "claude.json",
+    provider: "claude",
+    quota: normalizeQuota("claude", {
+      five_hour: { utilization: 100, resets_at: generalReset },
+      seven_day_haiku: { utilization: 100, resets_at: modelReset },
+    }),
+  };
+  assert.equal(nearestReset([account], "claude-opus-5-5", now), generalReset);
+  assert.deepEqual(nearestResetInfo([account], "claude-haiku-4-5", now), {
+    resetsAt: modelReset,
+    rateLimitType: undefined,
+    provider: "claude",
+  });
 });

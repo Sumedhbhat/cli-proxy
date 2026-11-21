@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeQuota,
+  nearestReset,
   rankAccounts,
   weeklyWindow,
   timestamp,
@@ -86,6 +87,20 @@ test("stale, missing, and elapsed resets never imply replenishment", () => {
     [0, 0, 0],
   );
 });
+test("the general Claude weekly deadline wins over model-specific deadlines", () => {
+  const mixed = account("mixed", 1);
+  present(mixed.quota).windows.push({
+    id: "seven_day",
+    label: "7-day limit",
+    remaining: 80,
+    resetsAt: new Date(now + 4 * 86400000).toISOString(),
+  });
+  const other = account("other", 2);
+  assert.deepEqual(
+    rankAccounts([mixed, other], now).map((rank) => rank.id),
+    ["other", "mixed"],
+  );
+});
 test("Claude utilization is converted to remaining percentage without dropping zero", () => {
   const q = normalizeQuota("claude", {
     five_hour: { utilization: 100, resets_at: "2026-10-25T00:00:00Z" },
@@ -96,6 +111,32 @@ test("Claude utilization is converted to remaining percentage without dropping z
     q.windows.map((w) => w.remaining),
     [0, 100],
   );
+});
+test("Claude discovers additional quota windows without treating spend as a quota", () => {
+  const reset = "2026-12-01T00:00:00.000Z";
+  const quota = normalizeQuota("claude", {
+    seven_day: { utilization: 30 },
+    seven_day_new_model: { utilization: 0, resets_at: reset },
+    research_budget: { utilization: 40, resets_at: reset },
+    five_hour_missing: { utilization: null },
+    seven_day_invalid: { utilization: false },
+    extra_usage: { utilization: 100, monthly_limit: 5000, used_credits: 5000 },
+  });
+  assert.deepEqual(quota.windows, [
+    { id: "seven_day", label: "7-day limit", remaining: 70, resetsAt: null },
+    {
+      id: "seven_day_new_model",
+      label: "7-day New Model",
+      remaining: 100,
+      resetsAt: reset,
+    },
+    {
+      id: "research_budget",
+      label: "Research Budget",
+      remaining: 60,
+      resetsAt: reset,
+    },
+  ]);
 });
 test("Codex reset timestamps and window durations are normalized", () => {
   const q = normalizeQuota("codex", {
@@ -141,8 +182,57 @@ test("plugin camelCase and snake_case buckets support 7d windows", () => {
       },
     ],
   });
-  assert.equal(present(weeklyWindow({ quota: q })).remaining, 25);
+  assert.equal(
+    present(weeklyWindow({ provider: "xai", quota: q })).remaining,
+    25,
+  );
   assert.throws(() => normalizeQuota("claude", {}), /no supported quota/);
+});
+test("Claude plugin buckets drive weekly ranking and model-aware retry estimates", () => {
+  const weeklyReset = new Date(now + 86400000).toISOString();
+  const opusReset = new Date(now + 2 * 86400000).toISOString();
+  const shortReset = new Date(now + 3600000).toISOString();
+  const pluginAccount = {
+    id: "plugin",
+    name: "plugin.json",
+    provider: "claude",
+    quota: normalizeQuota("claude", {
+      groups: [
+        {
+          buckets: [
+            { window: "5h", remainingFraction: 0.6, resetTime: shortReset },
+            {
+              window: "7d",
+              description: "Opus limit",
+              remainingFraction: 0.4,
+              resetTime: opusReset,
+            },
+            { window: "7d", remainingFraction: 0.8, resetTime: weeklyReset },
+          ],
+        },
+      ],
+    }),
+  };
+  assert.equal(weeklyWindow(pluginAccount)?.resetsAt, weeklyReset);
+  assert.ok(rankAccounts([pluginAccount], now)[0].priority > 0);
+  assert.deepEqual(
+    rankAccounts([pluginAccount, account("other", 1.5)], now).map(
+      (rank) => rank.id,
+    ),
+    ["plugin", "other"],
+  );
+  const blocked = {
+    ...pluginAccount,
+    quota: {
+      ...pluginAccount.quota,
+      windows: pluginAccount.quota.windows.map((window) => ({
+        ...window,
+        remaining: 0,
+      })),
+    },
+  };
+  assert.equal(nearestReset([blocked], "claude-sonnet-4-6", now), weeklyReset);
+  assert.equal(nearestReset([blocked], "claude-opus-5-5", now), opusReset);
 });
 test("Codex available resets preserve zero and distinguish missing or malformed balances", () => {
   const usage = { rate_limit: { primary_window: { used_percent: 17 } } };

@@ -34,8 +34,8 @@ export function demoAccounts(): Account[] {
       fetchedAt: new Date().toISOString(),
       windows: [
         {
-          id: provider === "claude" ? "seven_day_fable" : "weekly",
-          label: provider === "claude" ? "7-day Fable" : "Weekly limit",
+          id: provider === "claude" ? "seven_day" : "weekly",
+          label: provider === "claude" ? "7-day limit" : "Weekly limit",
           remaining,
           resetsAt: days(reset),
         },
@@ -49,8 +49,8 @@ export function demoAccounts(): Account[] {
           ? []
           : [
               {
-                id: "seven_day",
-                label: "7-day limit",
+                id: "seven_day_opus",
+                label: "7-day Opus",
                 remaining: extra,
                 resetsAt: days(reset),
               },

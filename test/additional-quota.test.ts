@@ -42,14 +42,14 @@ const rowFor = (html: string, id: string) =>
       ...html.matchAll(/<article class="account-row">[\s\S]*?<\/article>/g),
     ].find(([row]) => row.includes(`data-id="${id}"`))?.[0],
   );
-const fableSection = (row: string) =>
+const additionalSection = (row: string) =>
   present(
-    /<section class="fable-limit" aria-label="Fable limit">([\s\S]*?)<\/section>/.exec(
+    /<section class="additional-limits" aria-label="Additional limits">([\s\S]*?)<\/section>/.exec(
       row,
     )?.[1],
   );
 
-test("Fable has a separate optional total while general Claude quota and every account limit stay visible", async (t) => {
+test("reported Claude limits have independent totals and account details in both layouts", async (t) => {
   t.mock.timers.enable({
     apis: ["Date"],
     now: Date.parse("2026-11-10T00:00:00Z"),
@@ -68,6 +68,7 @@ test("Fable has a separate optional total while general Claude quota and every a
         seven_day_opus: { utilization: 60, resets_at: at(2) },
         seven_day_sonnet: { utilization: 10, resets_at: at(3) },
         seven_day_fable: { utilization: 90, resets_at: fableReset },
+        one_day_research: { utilization: 25, resets_at: at(0.5) },
       }),
       claude("ordinary", {
         seven_day: { utilization: 70, resets_at: generalReset },
@@ -81,13 +82,14 @@ test("Fable has a separate optional total while general Claude quota and every a
         ...claude("paused", {
           seven_day: { utilization: 0, resets_at: at(0.5) },
           seven_day_fable: { utilization: 0, resets_at: at(0.5) },
+          seven_day_paused_only: { utilization: 0 },
         }),
         disabled: true,
       },
     ]),
   );
   const assertSummaries = () => {
-    assert.equal(cards(main.innerHTML).length, 3);
+    assert.equal(cards(main.innerHTML).length, 6);
     const general = cardFor(main.innerHTML, "claude", "Weekly limit");
     assert.match(general, /<strong>150%<\/strong><span>of 300%<\/span>/);
     assert.match(general, /<small>3 credentials<\/small>/);
@@ -98,6 +100,9 @@ test("Fable has a separate optional total while general Claude quota and every a
     assert.match(fable, /in 1 day/);
     assert.equal((fable.match(/role="meter"/g) || []).length, 2);
     assert.match(fable, /aria-valuenow="0"/);
+    const research = cardFor(main.innerHTML, "claude", "One-day Research");
+    assert.match(research, /<strong>75%<\/strong><span>of 100%<\/span>/);
+    assert.match(research, /<small>1 credential<\/small>/);
   };
   const assertLimits = () => {
     const row = rowFor(main.innerHTML, "mixed");
@@ -107,6 +112,7 @@ test("Fable has a separate optional total while general Claude quota and every a
       ["7-day Fable", 10],
       ["7-day Opus", 40],
       ["7-day Sonnet", 90],
+      ["One-day Research", 75],
     ]) {
       assert.match(
         row,
@@ -115,11 +121,11 @@ test("Fable has a separate optional total while general Claude quota and every a
     }
     assert.ok(row.indexOf("7-day limit") < row.indexOf("5-hour limit"));
     assert.ok(row.indexOf("5-hour limit") < row.indexOf("7-day Fable"));
-    const fable = fableSection(row);
-    assert.match(fable, /90% used · 10% remaining/);
-    assert.match(fable, /in 1 day<br>/);
+    const additional = additionalSection(row);
+    assert.match(additional, /90% used · 10% remaining/);
+    assert.match(additional, /in 1 day<br>/);
     assert.ok(
-      fable.includes(
+      additional.includes(
         new Date(fableReset).toLocaleString([], {
           month: "short",
           day: "numeric",
@@ -128,21 +134,21 @@ test("Fable has a separate optional total while general Claude quota and every a
         }),
       ),
     );
-    assert.doesNotMatch(fable, /7-day limit|5-hour limit|Opus|Sonnet/);
+    assert.doesNotMatch(additional, /7-day limit|5-hour limit/);
     assert.equal((row.match(/7-day Fable/g) || []).length, 1);
-    const missing = fableSection(rowFor(main.innerHTML, "ordinary"));
-    assert.match(missing, /7-day Fable/);
-    assert.match(missing, /Not reported/);
-    assert.doesNotMatch(missing, /role="meter"|\d+%/);
+    assert.doesNotMatch(
+      rowFor(main.innerHTML, "ordinary"),
+      /Additional limits|Fable|Research/,
+    );
     assert.match(
-      fableSection(rowFor(main.innerHTML, "fable-empty")),
+      additionalSection(rowFor(main.innerHTML, "fable-empty")),
       /100% used · 0% remaining/,
     );
     assert.doesNotMatch(rowFor(main.innerHTML, "codex"), /Fable/);
   };
   assert.match(
     main.innerHTML,
-    /<span>Short window<\/span><span>Fable limit<\/span>/,
+    /<span>Short window<\/span><span>Additional limits<\/span>/,
   );
   assertSummaries();
   assertLimits();
@@ -157,29 +163,90 @@ test("Fable has a separate optional total while general Claude quota and every a
   assertSummaries();
 });
 
-test("accounts without a Fable limit do not produce a Fable tile", async (t) => {
+test("Claude plugin weekly and short buckets stay separate from additional limits", async (t) => {
   const { main } = await dashboard(
     t,
     state([
-      claude("absent", { seven_day: { utilization: 40 } }),
-      claude("null", {
-        seven_day: { utilization: 20 },
-        seven_day_fable: null,
+      claude("plugin", {
+        groups: [
+          {
+            buckets: [
+              {
+                window: "5h",
+                description: "5-hour limit",
+                remainingFraction: 0.9,
+              },
+              {
+                window: "7d",
+                description: "Weekly Opus",
+                remainingFraction: 0.5,
+              },
+              {
+                window: "7d",
+                description: "Weekly limit",
+                remainingFraction: 0.75,
+              },
+            ],
+          },
+        ],
       }),
-      {
-        ...claude("paused", { seven_day_fable: { utilization: 0 } }),
-        disabled: true,
-      },
     ]),
   );
+  assert.match(
+    cardFor(main.innerHTML, "claude", "Weekly limit"),
+    /<strong>75%<\/strong>/,
+  );
+  assert.match(
+    cardFor(main.innerHTML, "claude", "Weekly Opus"),
+    /<strong>50%<\/strong>/,
+  );
+  const additional = additionalSection(rowFor(main.innerHTML, "plugin"));
+  assert.match(additional, /Weekly Opus/);
+  assert.doesNotMatch(additional, /5-hour limit|Weekly limit/);
+});
+
+test("absent and null additional limits leave no tiles, columns, or placeholders", async (t) => {
+  const accounts = [
+    claude("absent", { seven_day: { utilization: 40 } }),
+    claude("null", {
+      seven_day: { utilization: 20 },
+      seven_day_fable: null,
+    }),
+  ];
+  const { main } = await dashboard(t, state(accounts));
   assert.equal(cards(main.innerHTML).length, 2);
   assert.match(
     cardFor(main.innerHTML, "claude", "Weekly limit"),
     /<strong>140%<\/strong><span>of 200%<\/span>/,
   );
-  assert.ok(cards(main.innerHTML).every((card) => !card.includes("Fable")));
-  for (const id of ["absent", "null"])
-    assert.match(fableSection(rowFor(main.innerHTML, id)), /Not reported/);
+  assert.doesNotMatch(main.innerHTML, /Fable|Additional limits/);
+
+  const refresh = () =>
+    main.handlers.click({
+      target: {
+        closest: (selector: string) =>
+          selector === "[data-action]"
+            ? { dataset: { action: "refresh" } }
+            : null,
+      },
+    });
+  const original = accounts[0];
+  accounts[0] = claude(original.id, {
+    seven_day: { utilization: 40 },
+    seven_day_fable: { utilization: 15 },
+    seven_day_research: { utilization: 35 },
+  });
+  await refresh();
+  assert.match(cardFor(main.innerHTML, "claude", "7-day Fable"), /85%/);
+  assert.match(cardFor(main.innerHTML, "claude", "7-day Research"), /65%/);
+  assert.match(
+    additionalSection(rowFor(main.innerHTML, original.id)),
+    /Research/,
+  );
+
+  accounts[0] = original;
+  await refresh();
+  assert.doesNotMatch(main.innerHTML, /Fable|Research|Additional limits/);
 });
 
 test("Fable-only accounts cannot be counted as general Claude quota", async (t) => {
@@ -189,7 +256,7 @@ test("Fable-only accounts cannot be counted as general Claude quota", async (t) 
   );
   assert.match(cardFor(main.innerHTML, "claude", "7-day Fable"), /65%/);
   assert.match(
-    fableSection(rowFor(main.innerHTML, "fable-only")),
+    additionalSection(rowFor(main.innerHTML, "fable-only")),
     /35% used · 65% remaining/,
   );
   const general = cardFor(main.innerHTML, "claude", "Weekly limit");
@@ -216,11 +283,11 @@ test("cached and stale Fable snapshots keep the tile without inventing fresh quo
   assert.match(fable, /<small>2 credentials<\/small>/);
   assert.match(fable, /Cached · Reset not reported/);
   assert.match(
-    fableSection(rowFor(main.innerHTML, "cached")),
+    additionalSection(rowFor(main.innerHTML, "cached")),
     /Cached · Reset not reported/,
   );
   assert.match(
-    fableSection(rowFor(main.innerHTML, "stale")),
+    additionalSection(rowFor(main.innerHTML, "stale")),
     /Stale · Reset not reported/,
   );
 });
