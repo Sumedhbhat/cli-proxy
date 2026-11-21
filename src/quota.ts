@@ -7,6 +7,8 @@ import type {
   JsonObject,
 } from "./domain.ts";
 const clamp = (n: number) => Math.max(0, Math.min(100, n));
+const claudeCadence = /^([a-z0-9]+)_(minute|hour|day|week|month)s?(?:_(.+))?$/;
+const claudeWeekly = /^(?:(?:seven|7)_days?|(?:one|1)_weeks?)(?:_|$)/;
 export function timestamp(value: unknown): string | null {
   if (value == null || value === "") return null;
   const n =
@@ -116,27 +118,23 @@ export function normalizeQuota(provider: string, input: JsonObject): Quota {
       }),
     );
   } else if (provider === "claude") {
-    windows = Object.entries(data)
-      .filter(
-        ([key, val]) =>
-          /five_hour|seven_day/.test(key) && val && typeof val === "object",
-      )
-      .map(([key, val]) =>
-        quotaWindow(
-          key,
-          (
-            {
-              five_hour: "5-hour limit",
-              seven_day: "7-day limit",
-              seven_day_fable: "7-day Fable",
-              seven_day_opus: "7-day Opus",
-              seven_day_sonnet: "7-day Sonnet",
-            } as Record<string, string>
-          )[key] || key.replaceAll("_", " "),
-          record(val).utilization,
-          record(val).resets_at,
-        ),
+    const title = (name: string) =>
+      name
+        .replaceAll("_", " ")
+        .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+    for (const [key, value] of Object.entries(data)) {
+      const window = record(value);
+      if (key === "extra_usage" || typeof window.utilization !== "number")
+        continue;
+      const duration = claudeCadence.exec(key);
+      if (!duration && !Object.hasOwn(window, "resets_at")) continue;
+      const label = duration
+        ? `${duration[1] === "five" ? "5" : duration[1] === "seven" ? "7" : title(duration[1])}-${duration[2]} ${duration[3] ? title(duration[3]) : "limit"}`
+        : title(key);
+      windows.push(
+        quotaWindow(key, label, window.utilization, window.resets_at),
       );
+    }
   } else if (provider === "codex") {
     for (const [key, value] of Object.entries(record(data.rate_limit))) {
       if (!value || typeof value !== "object") continue;
@@ -170,20 +168,18 @@ export function normalizeQuota(provider: string, input: JsonObject): Quota {
     fetchedAt: new Date(now).toISOString(),
   };
 }
+const isWeekly = (window: QuotaWindow) =>
+  /7[ _-]?day|7d|seven[ _-]?day|week/i.test(window.id + " " + window.label);
+
 export function weeklyWindow(
-  account: Pick<RankedAccount, "quota">,
-): QuotaWindow | null {
+  account: Pick<RankedAccount, "provider" | "quota">,
+) {
   const windows = account.quota?.windows || [];
-  return (
-    windows.find(
-      (w) =>
-        /fable/i.test(w.id + w.label) && /7|seven|week/i.test(w.id + w.label),
-    ) ||
-    windows.find((w) =>
-      /7[ _-]?day|7d|seven[ _-]?day|week/i.test(w.id + w.label),
-    ) ||
-    null
-  );
+  return account.provider === "claude"
+    ? windows.find(
+        (window) => window.id === "seven_day" || window.id === "weekly",
+      )
+    : windows.find(isWeekly);
 }
 export function rankAccounts(
   accounts: ReadonlyArray<RankedAccount>,
@@ -198,7 +194,11 @@ export function rankAccounts(
       .map((a) => {
         const fresh =
           !!a.quota && now - Date.parse(a.quota.fetchedAt) <= staleMs;
-        const w = weeklyWindow(a);
+        const w =
+          weeklyWindow(a) ??
+          (a.provider === "claude"
+            ? a.quota?.windows.find((window) => claudeWeekly.test(window.id))
+            : undefined);
         // Never invent replenishment from a local timer. A fresh provider poll must confirm it.
         const future = w?.resetsAt && Date.parse(w.resetsAt ?? "") > now;
         const exhausted =
@@ -269,6 +269,7 @@ export function nearestResetInfo(
 ) {
   const provider = modelProvider(model);
   if (!provider) return null;
+  const modelParts = model.toLowerCase().split("-");
   const resets = accounts.flatMap((a) => {
     const quota = a.quota;
     if (
@@ -279,10 +280,15 @@ export function nearestResetInfo(
       (provider !== "claude" && !(now - Date.parse(quota.fetchedAt) <= 180000))
     )
       return [];
-    const windows = quota.windows.filter((w) => {
-      const family = /opus|sonnet|fable/i.exec(w.id + " " + w.label)?.[0];
-      return !family || model.toLowerCase().includes(family.toLowerCase());
-    });
+    const windows =
+      provider === "claude"
+        ? quota.windows.filter((window) => {
+            const cadence = claudeCadence.exec(window.id);
+            return cadence
+              ? !cadence[3] || modelParts.includes(cadence[3])
+              : window.id === "weekly";
+          })
+        : quota.windows;
     const blocked = windows.filter((w) => w.remaining <= 0);
     const relevant = blocked.length
       ? blocked

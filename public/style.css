@@ -135,11 +135,10 @@ select, .search { min-height: 42px; padding: 8px 13px; border: 1px solid var(--l
 .section-head .provider-mark { width: 21px; height: 21px; }
 .section-head .provider-mark svg { width: 20px; height: 20px; }
 .sort-hint { color: var(--faint); font-size: 12px; }
-.ledger-head, .account-row { display: grid; grid-template-columns: minmax(210px, 1.45fr) repeat(3, minmax(130px, 1fr)) 110px; gap: 24px; align-items: center; }
+.ledger-head, .account-row { display: grid; grid-template-columns: minmax(210px, 1.45fr) repeat(var(--quota-columns, 2), minmax(130px, 1fr)) 110px; gap: 24px; align-items: center; }
+.has-additional-limits { --quota-columns: 3; }
 .ledger-head { padding: 0 0 13px; border-bottom: 1px solid var(--line); color: var(--faint); font-size: 12px; }
 .additional-limits { display: grid; gap: 20px; min-width: 0; }
-.secondary-limits { grid-column: 2 / -2; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.fable-limit { min-width: 0; }
 .account-row { min-height: 122px; padding: 25px 0; border-bottom: 1px solid var(--line); }
 .account-identity, .quota-cell { min-width: 0; }
 .account-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 15px/1.5 var(--mono); letter-spacing: -.3px; }
@@ -149,10 +148,11 @@ select, .search { min-height: 42px; padding: 8px 13px; border: 1px solid var(--l
 .next-badge { padding: 2px 7px; border-radius: 4px; background: color-mix(in srgb, var(--green) 10%, transparent); color: var(--green); font-size: 10px; }
 .paused-badge { color: var(--yellow); }
 .quota-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 10px; color: var(--muted); font-size: 14px; }
+.quota-top span, .summary-label { overflow-wrap: anywhere; }
 .quota-top strong { color: var(--text); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .quota-reset { margin-top: 9px; color: var(--faint); font-size: 12px; line-height: 1.6; }
 .quota-detail { margin-top: 9px; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.account-row > .button { justify-self: end; min-height: 40px; padding: 6px 0 6px 6px; font-size: 12px; }
+.account-row > .button { grid-column: -2; justify-self: end; min-height: 40px; padding: 6px 0 6px 6px; font-size: 12px; }
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
 .error { color: var(--red); }
@@ -193,7 +193,6 @@ footer .tiny-dot { width: 5px; height: 5px; margin-right: 6px; }
 .card-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .card-view .account-row { display: block; padding: 25px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .card-view .quota-cell { margin: 24px 0; }
-.card-view .secondary-limits { grid-template-columns: minmax(0, 1fr); }
 .card-view .additional-limits .quota-cell { margin: 0; }
 .card-view .account-row > .button { margin-top: 10px; }
 .rank-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 17px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
@@ -225,7 +224,7 @@ footer .tiny-dot { width: 5px; height: 5px; margin-right: 6px; }
   .quota-top strong { font-size: 19px; }
   .quota-reset, .account-meta { font-size: 14px; }
   .account-row > .button { font-size: 14px; }
-  .ledger-head, .account-row { grid-template-columns: minmax(270px, 1.45fr) repeat(3, minmax(165px, 1fr)) 145px; gap: 30px; }
+  .ledger-head, .account-row { grid-template-columns: minmax(270px, 1.45fr) repeat(var(--quota-columns, 2), minmax(165px, 1fr)) 145px; gap: 30px; }
 }
 
 /* Usage & cost */
@@ -286,7 +285,7 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   .summary-card { padding: 21px 17px 23px; }
   .summary-top { font-size: 16px; }
   .summary-top small { font-size: 11px; }
-  .ledger-head, .account-row { grid-template-columns: minmax(190px, 1.4fr) repeat(3, minmax(115px, 1fr)) 105px; gap: 18px; }
+  .ledger-head, .account-row { grid-template-columns: minmax(190px, 1.4fr) repeat(var(--quota-columns, 2), minmax(115px, 1fr)) 105px; gap: 18px; }
   .quota-top { font-size: 13px; }
   .quota-top strong { font-size: 15px; }
   .account-name { font-size: 14px; }
@@ -303,7 +302,6 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   .ledger-head { display: none; }
   .account-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 24px; padding: 24px 0; }
   .account-identity { grid-column: 1 / -1; }
-  .secondary-limits { grid-column: 1 / -1; }
   .account-row > .button { grid-column: 1 / -1; justify-self: start; padding-left: 0; font-size: 14px; }
   .account-name { font-size: 16px; }
   .quota-top { font-size: 14px; }
@@ -359,7 +357,8 @@ pre.secret { user-select: all; overflow-wrap: anywhere; white-space: pre-wrap; }
   .section-head h2 { font-size: 16px; }
   .sort-hint { font-size: 11px; }
   .account-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 23px 18px; }
-  .secondary-limits { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .additional-limits { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card-view .additional-limits { grid-template-columns: minmax(0, 1fr); }
   .account-name { font-size: 15px; }
   .account-meta { font-size: 12px; }
   .quota-top { font-size: 13px; gap: 6px; }

@@ -9,6 +9,7 @@ import {
 } from "effect";
 import { DashboardState, JsonObject, message, record } from "../src/domain.ts";
 import type { Account, QuotaWindow } from "../src/domain.ts";
+import { weeklyWindow } from "../src/quota.ts";
 import { usagePage, usageQuery, usageView } from "./usage.ts";
 import type { Report, UsageView } from "./usage.ts";
 declare global {
@@ -136,14 +137,23 @@ function mask(value: string = "") {
   const [local, domain] = core.split("@");
   return `${prefix}${local[0] || ""}•••@${domain?.[0] || ""}•••${suffix}`;
 }
-const weekly = (a: Account, family: "general" | "fable" = "general") =>
-  a.quota?.windows.find(
-    (w) =>
-      /7[ _-]?day|7d|seven[ _-]?day|week/i.test(w.id + " " + w.label) &&
-      (family === "fable"
-        ? /fable/i.test(w.id + " " + w.label)
-        : !/fable|opus|sonnet/i.test(w.id + " " + w.label)),
+function accountLimits(account: Account) {
+  const windows = account.quota?.windows || [];
+  const weekly = weeklyWindow(account);
+  const short = windows.find((window) =>
+    account.provider === "claude"
+      ? window.id === "five_hour"
+      : window !== weekly &&
+        /five|5.hour|5h|primary/i.test(window.id + window.label),
   );
+  return {
+    weekly,
+    short,
+    additional: windows.filter(
+      (window) => window !== weekly && window !== short,
+    ),
+  };
+}
 const fresh = (a: Account) =>
   a.quota && Date.now() - Date.parse(a.quota.fetchedAt) <= 180000;
 const pct = (n: number) => `${Math.round(n)}%`;
@@ -244,38 +254,49 @@ function summary() {
   const providers = [
     ...new Set(["claude", "codex", ...state.accounts.map((a) => a.provider)]),
   ];
-  const summaries = providers.flatMap((provider) => {
-    const pool = state.accounts.filter(
-      (a) => a.provider === provider && !a.disabled,
-    );
-    const families: Array<"general" | "fable"> =
-      provider === "claude" && pool.some((a) => weekly(a, "fable"))
-        ? ["general", "fable"]
-        : ["general"];
-    return families.map((family) => ({
-      provider,
-      family,
-      pool: family === "fable" ? pool.filter((a) => weekly(a, family)) : pool,
-    }));
+  const general = providers.map((provider) => {
+    const entries = state.accounts
+      .filter((account) => account.provider === provider && !account.disabled)
+      .map((account) => ({ account, window: weeklyWindow(account) }));
+    return { provider, label: "Weekly limit", entries };
   });
+  const additional = Map.groupBy(
+    state.accounts.flatMap((account) =>
+      account.provider === "claude" && !account.disabled
+        ? accountLimits(account).additional.map((window) => ({
+            account,
+            window,
+          }))
+        : [],
+    ),
+    ({ window }) => window.id,
+  );
+  const summaries = [
+    ...general,
+    ...Array.from(additional.values(), (entries) => ({
+      provider: "claude",
+      label: entries[0].window.label,
+      entries,
+    })),
+  ];
   return `<div class="summary-grid" style="--summary-count:${Math.min(4, summaries.length)}">${summaries
-    .map(({ provider, family, pool }) => {
-      const known = pool.filter((a) => fresh(a) && weekly(a, family));
+    .map(({ provider, label, entries }) => {
+      const known = entries.flatMap(({ account, window }) =>
+        window && fresh(account) ? [{ account, window }] : [],
+      );
       const total = known.reduce(
-        (n, a) => n + (weekly(a, family)?.remaining ?? 0),
+        (sum, { window }) => sum + window.remaining,
         0,
       );
       const first = known
-        .flatMap((a) => {
-          const w = weekly(a, family);
-          return w?.resetsAt ? [w] : [];
-        })
+        .flatMap(({ window }) => (window.resetsAt ? [window] : []))
         .sort(
           (a, b) => Date.parse(a.resetsAt ?? "") - Date.parse(b.resetsAt ?? ""),
         )[0];
-      const label = family === "fable" ? "7-day Fable" : "Weekly limit";
-      const cached = known.some((a) => a.quotaError) ? "Cached · " : "";
-      return `<article class="summary-card"><div class="summary-top">${mark(provider)}${esc(pName(provider))}<small>${pool.length} ${pool.length === 1 ? "credential" : "credentials"}</small></div><div class="summary-label">${label}</div><div class="summary-number"><strong>${known.length ? pct(total) : "—"}</strong><span>of ${known.length * 100}%${known.length < pool.length ? " known" : ""}</span></div><div class="segmented">${pool.length ? pool.map((a) => (fresh(a) && weekly(a, family) ? bar(weekly(a, family)?.remaining ?? 0) : '<div class="bar"></div>')).join("") : '<div class="bar"></div>'}</div><div class="summary-reset">${cached}${first ? `${relative(first.resetsAt)} · ${date(first.resetsAt)}` : known.length ? "Reset not reported" : "No fresh quota loaded"}</div></article>`;
+      const cached = known.some(({ account }) => account.quotaError)
+        ? "Cached · "
+        : "";
+      return `<article class="summary-card"><div class="summary-top">${mark(provider)}${esc(pName(provider))}<small>${entries.length} ${entries.length === 1 ? "credential" : "credentials"}</small></div><div class="summary-label">${esc(label)}</div><div class="summary-number"><strong>${known.length ? pct(total) : "—"}</strong><span>of ${known.length * 100}%${known.length < entries.length ? " known" : ""}</span></div><div class="segmented">${entries.length ? entries.map(({ account, window }) => (window && fresh(account) ? bar(window.remaining) : '<div class="bar"></div>')).join("") : '<div class="bar"></div>'}</div><div class="summary-reset">${cached}${first ? `${relative(first.resetsAt)} · ${date(first.resetsAt)}` : known.length ? "Reset not reported" : "No fresh quota loaded"}</div></article>`;
     })
     .join("")}</div>`;
 }
@@ -286,11 +307,6 @@ function quotaCell(
 ) {
   if (!w) return '<div class="quota-cell"><span class="faint">—</span></div>';
   return `<div class="quota-cell"><div class="quota-top"><span>${esc(w.label)}</span><strong>${pct(w.remaining)}</strong></div>${bar(w.remaining)}${detailed ? `<div class="quota-detail">${pct(100 - w.remaining)} used · ${pct(w.remaining)} remaining</div>` : ""}<div class="quota-reset" title="${esc(date(w.resetsAt))}">${account.quotaError ? "Cached · " : !fresh(account) ? "Stale · " : ""}${relative(w.resetsAt)}${detailed && w.resetsAt ? `<br>${esc(date(w.resetsAt))}` : ""}</div></div>`;
-}
-function fableLimit(account: Account) {
-  if (account.provider !== "claude") return quotaCell(undefined, account);
-  const window = weekly(account, "fable");
-  return `<section class="fable-limit" aria-label="Fable limit">${window ? quotaCell(window, account, true) : '<div class="quota-cell"><div class="quota-top"><span>7-day Fable</span><strong>—</strong></div><div class="quota-reset">Not reported</div></div>'}</section>`;
 }
 function accountResets(account: Account) {
   const count = account.quota?.availableResets;
@@ -330,32 +346,31 @@ function accountResets(account: Account) {
   );
 }
 function rows(accounts: ReadonlyArray<Account>, manage = false) {
-  const showFable = accounts.some((a) => a.provider === "claude");
+  const limits = accounts.map((account) => ({
+    account,
+    ...accountLimits(account),
+  }));
+  const showAdditional = limits.some(({ additional }) => additional.length > 0);
   const order = new Map(state.ranks.map((rank, index) => [rank.id, index]));
-  const sorted = [...accounts].sort((a, b) => {
-    if (sort === "name") return a.name.localeCompare(b.name);
-    if (sort === "remaining")
-      return (weekly(a)?.remaining ?? 101) - (weekly(b)?.remaining ?? 101);
-    return (
-      (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity) ||
-      a.name.localeCompare(b.name)
-    );
-  });
+  const sorted = limits.sort(
+    ({ account: a, weekly: weeklyA }, { account: b, weekly: weeklyB }) => {
+      if (sort === "name") return a.name.localeCompare(b.name);
+      if (sort === "remaining")
+        return (weeklyA?.remaining ?? 101) - (weeklyB?.remaining ?? 101);
+      return (
+        (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity) ||
+        a.name.localeCompare(b.name)
+      );
+    },
+  );
   const ranks = state.ranks.filter((r) => r.priority > 0);
   const next = ranks.find((r) => accounts.some((a) => a.id === r.id))?.id;
-  return `<div class="${layout === "cards" ? "card-view" : ""}">${layout === "ledger" ? `<div class="ledger-head"><span>Credential</span><span>Weekly quota</span><span>Short window</span><span>${showFable ? "Fable limit" : "Additional limits"}</span><span></span></div>` : ""}${sorted
-    .map((a) => {
-      const w = weekly(a),
-        windows = a.quota?.windows || [],
-        hourly = windows.find(
-          (x) => x !== w && /five|5.hour|5h|primary/i.test(x.id + x.label),
-        ),
-        fable = weekly(a, "fable"),
-        extra = windows.filter(
-          (x) => x !== w && x !== hourly && (!showFable || x !== fable),
-        ),
-        additional = `<div class="additional-limits${showFable ? " secondary-limits" : ""}">${extra.map((x) => quotaCell(x, a)).join("")}</div>`;
-      return `<article class="account-row"><div class="account-identity"><span class="account-name" title="${esc(mask(a.name))}">${esc(mask(a.name))}</span><div class="account-meta"><span>${esc(a.quota?.plan || a.plan || pName(a.provider))}</span>${a.disabled ? '<span class="paused-badge">Paused</span>' : next === a.id ? '<span class="next-badge">Next for new sessions</span>' : ""}${a.quotaError ? `<span class="error" title="${esc(a.quotaError)}">${a.quota ? "Using cached quota" : "Quota unavailable"}</span>` : ""}</div>${accountResets(a)}</div>${quotaCell(w, a)}${quotaCell(hourly, a)}${showFable ? fableLimit(a) : extra.length ? additional : quotaCell(undefined, a)}<button class="button quiet" data-action="${manage ? "toggle-account" : "refresh"}" data-id="${esc(a.id)}" ${busy ? "disabled" : ""}>${manage ? (a.disabled ? "Resume" : "Pause") : "↻ Refresh quota"}</button>${showFable && extra.length ? additional : ""}</article>`;
+  return `<div class="${layout === "cards" ? "card-view" : ""}${showAdditional ? " has-additional-limits" : ""}">${layout === "ledger" ? `<div class="ledger-head"><span>Credential</span><span>Weekly quota</span><span>Short window</span>${showAdditional ? "<span>Additional limits</span>" : ""}<span></span></div>` : ""}${sorted
+    .map(({ account: a, weekly, short, additional }) => {
+      const extra = additional.length
+        ? `<section class="additional-limits" aria-label="Additional limits">${additional.map((window) => quotaCell(window, a, a.provider === "claude")).join("")}</section>`
+        : "";
+      return `<article class="account-row"><div class="account-identity"><span class="account-name" title="${esc(mask(a.name))}">${esc(mask(a.name))}</span><div class="account-meta"><span>${esc(a.quota?.plan || a.plan || pName(a.provider))}</span>${a.disabled ? '<span class="paused-badge">Paused</span>' : next === a.id ? '<span class="next-badge">Next for new sessions</span>' : ""}${a.quotaError ? `<span class="error" title="${esc(a.quotaError)}">${a.quota ? "Using cached quota" : "Quota unavailable"}</span>` : ""}</div>${accountResets(a)}</div>${quotaCell(weekly, a)}${quotaCell(short, a)}${extra}<button class="button quiet" data-action="${manage ? "toggle-account" : "refresh"}" data-id="${esc(a.id)}" ${busy ? "disabled" : ""}>${manage ? (a.disabled ? "Resume" : "Pause") : "↻ Refresh quota"}</button></article>`;
     })
     .join("")}</div>`;
 }
