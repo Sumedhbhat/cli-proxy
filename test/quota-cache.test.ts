@@ -261,6 +261,11 @@ test(
       releaseAccounts = resolve;
     });
     snapshot = await start(false);
+    // The server listens before its startup refresh begins, so the first poll may precede it.
+    for (let i = 0; i < 100 && !snapshot.refreshing; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      snapshot = await state();
+    }
     assert.equal(snapshot.lastRefresh, null);
     assert.equal(snapshot.refreshing, true);
     for (const account of snapshot.accounts) {
