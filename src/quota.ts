@@ -170,17 +170,38 @@ export function normalizeQuota(provider: string, input: JsonObject): Quota {
 }
 const isWeekly = (window: QuotaWindow) =>
   /7[ _-]?day|7d|seven[ _-]?day|week/i.test(window.id + " " + window.label);
+const isPluginWindow = (window: QuotaWindow) => /^\d+-\d+-/.test(window.id);
+const pluginModel = (window: QuotaWindow) =>
+  /opus|sonnet|fable/i.exec(window.id + " " + window.label)?.[0].toLowerCase();
 
 export function weeklyWindow(
   account: Pick<RankedAccount, "provider" | "quota">,
 ) {
   const windows = account.quota?.windows || [];
   return account.provider === "claude"
-    ? windows.find(
+    ? (windows.find(
         (window) => window.id === "seven_day" || window.id === "weekly",
-      )
+      ) ??
+        windows.find(
+          (window) =>
+            isPluginWindow(window) && isWeekly(window) && !pluginModel(window),
+        ))
     : windows.find(isWeekly);
 }
+
+export function shortWindow(
+  account: Pick<RankedAccount, "provider" | "quota">,
+  weekly: QuotaWindow | undefined,
+) {
+  return account.quota?.windows.find(
+    (window) =>
+      window !== weekly &&
+      (window.id === "five_hour" ||
+        ((account.provider !== "claude" || isPluginWindow(window)) &&
+          /five|5.hour|5h|primary/i.test(window.id + " " + window.label))),
+  );
+}
+
 export function rankAccounts(
   accounts: ReadonlyArray<RankedAccount>,
   now = Date.now(),
@@ -197,7 +218,11 @@ export function rankAccounts(
         const w =
           weeklyWindow(a) ??
           (a.provider === "claude"
-            ? a.quota?.windows.find((window) => claudeWeekly.test(window.id))
+            ? a.quota?.windows.find(
+                (window) =>
+                  claudeWeekly.test(window.id) ||
+                  (isPluginWindow(window) && isWeekly(window)),
+              )
             : undefined);
         // Never invent replenishment from a local timer. A fresh provider poll must confirm it.
         const future = w?.resetsAt && Date.parse(w.resetsAt ?? "") > now;
@@ -283,6 +308,10 @@ export function nearestResetInfo(
     const windows =
       provider === "claude"
         ? quota.windows.filter((window) => {
+            if (isPluginWindow(window)) {
+              const family = pluginModel(window);
+              return !family || modelParts.includes(family);
+            }
             const cadence = claudeCadence.exec(window.id);
             return cadence
               ? !cadence[3] || modelParts.includes(cadence[3])

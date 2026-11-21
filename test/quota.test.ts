@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeQuota,
+  nearestReset,
   rankAccounts,
   weeklyWindow,
   timestamp,
@@ -186,6 +187,52 @@ test("plugin camelCase and snake_case buckets support 7d windows", () => {
     25,
   );
   assert.throws(() => normalizeQuota("claude", {}), /no supported quota/);
+});
+test("Claude plugin buckets drive weekly ranking and model-aware retry estimates", () => {
+  const weeklyReset = new Date(now + 86400000).toISOString();
+  const opusReset = new Date(now + 2 * 86400000).toISOString();
+  const shortReset = new Date(now + 3600000).toISOString();
+  const pluginAccount = {
+    id: "plugin",
+    name: "plugin.json",
+    provider: "claude",
+    quota: normalizeQuota("claude", {
+      groups: [
+        {
+          buckets: [
+            { window: "5h", remainingFraction: 0.6, resetTime: shortReset },
+            {
+              window: "7d",
+              description: "Opus limit",
+              remainingFraction: 0.4,
+              resetTime: opusReset,
+            },
+            { window: "7d", remainingFraction: 0.8, resetTime: weeklyReset },
+          ],
+        },
+      ],
+    }),
+  };
+  assert.equal(weeklyWindow(pluginAccount)?.resetsAt, weeklyReset);
+  assert.ok(rankAccounts([pluginAccount], now)[0].priority > 0);
+  assert.deepEqual(
+    rankAccounts([pluginAccount, account("other", 1.5)], now).map(
+      (rank) => rank.id,
+    ),
+    ["plugin", "other"],
+  );
+  const blocked = {
+    ...pluginAccount,
+    quota: {
+      ...pluginAccount.quota,
+      windows: pluginAccount.quota.windows.map((window) => ({
+        ...window,
+        remaining: 0,
+      })),
+    },
+  };
+  assert.equal(nearestReset([blocked], "claude-sonnet-4-6", now), weeklyReset);
+  assert.equal(nearestReset([blocked], "claude-opus-5-5", now), opusReset);
 });
 test("Codex available resets preserve zero and distinguish missing or malformed balances", () => {
   const usage = { rate_limit: { primary_window: { used_percent: 17 } } };

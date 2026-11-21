@@ -9,7 +9,7 @@ import {
 } from "effect";
 import { DashboardState, JsonObject, message, record } from "../src/domain.ts";
 import type { Account, QuotaWindow } from "../src/domain.ts";
-import { weeklyWindow } from "../src/quota.ts";
+import { shortWindow, weeklyWindow } from "../src/quota.ts";
 import { usagePage, usageQuery, usageView } from "./usage.ts";
 import type { Report, UsageView } from "./usage.ts";
 declare global {
@@ -140,12 +140,7 @@ function mask(value: string = "") {
 function accountLimits(account: Account) {
   const windows = account.quota?.windows || [];
   const weekly = weeklyWindow(account);
-  const short = windows.find((window) =>
-    account.provider === "claude"
-      ? window.id === "five_hour"
-      : window !== weekly &&
-        /five|5.hour|5h|primary/i.test(window.id + window.label),
-  );
+  const short = shortWindow(account, weekly);
   return {
     weekly,
     short,

@@ -163,6 +163,48 @@ test("reported Claude limits have independent totals and account details in both
   assertSummaries();
 });
 
+test("Claude plugin weekly and short buckets stay separate from additional limits", async (t) => {
+  const { main } = await dashboard(
+    t,
+    state([
+      claude("plugin", {
+        groups: [
+          {
+            buckets: [
+              {
+                window: "5h",
+                description: "5-hour limit",
+                remainingFraction: 0.9,
+              },
+              {
+                window: "7d",
+                description: "Weekly Opus",
+                remainingFraction: 0.5,
+              },
+              {
+                window: "7d",
+                description: "Weekly limit",
+                remainingFraction: 0.75,
+              },
+            ],
+          },
+        ],
+      }),
+    ]),
+  );
+  assert.match(
+    cardFor(main.innerHTML, "claude", "Weekly limit"),
+    /<strong>75%<\/strong>/,
+  );
+  assert.match(
+    cardFor(main.innerHTML, "claude", "Weekly Opus"),
+    /<strong>50%<\/strong>/,
+  );
+  const additional = additionalSection(rowFor(main.innerHTML, "plugin"));
+  assert.match(additional, /Weekly Opus/);
+  assert.doesNotMatch(additional, /5-hour limit|Weekly limit/);
+});
+
 test("absent and null additional limits leave no tiles, columns, or placeholders", async (t) => {
   const accounts = [
     claude("absent", { seven_day: { utilization: 40 } }),
